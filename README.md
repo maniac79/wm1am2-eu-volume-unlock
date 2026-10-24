@@ -188,14 +188,73 @@ src/org/maniac79/nvptool/Read.java      read-only dump
 src/org/maniac79/nvptool/Apply.java     write the configuration (model-guarded)
 src/org/maniac79/nvptool/Rollback.java  restore factory values
 src/AndroidManifest.xml                 no components, on purpose
-tools/build.sh                          build + sign the APK
-tools/inject.py                         start a class in platform_app
+tools/build.sh                          build + sign the APK (bash)
+tools/inject.py                         start a class in platform_app (Python)
+tools/inject.sh                         same, macOS/Linux — needs only adb
+tools/inject.ps1                        same, Windows — needs only adb
 docs/FINDINGS.md                        technical writeup and negative results
 docs/SECURITY.md                        analysis of the vendor HAL access model
 ```
 
 
 ---
+## FAQ
+
+**Will a firmware update undo this?**
+Assume yes. The EU limit is enforced by a boot script and a calibrated volume
+table that ship inside the firmware, and an update can replace either. Re-check
+after any update:
+
+```bash
+adb shell getprop vendor.safe_volume.enabled
+```
+
+`01000000` means the cap is back — run `Apply` again and reboot. `00000000`
+means it survived.
+
+**Should I block firmware updates?**
+Recommended, and it is a separate one-line step — see *Firmware updates* above.
+`com.sony.walkman.systemupdater` is still active on this model, and a 2026
+Asia-region firmware exists.
+
+**Does it survive a factory reset?**
+Untested. Run `Read` afterwards; if the fields are back at their default
+values, run `Apply` and reboot.
+
+**Do I need root, or an unlocked bootloader?**
+No. Neither is used, and on this hardware neither was achievable
+(`secure:yes`, `get_unlock_ability=0`).
+
+**Will it work on the WM1ZM2, ZX507, A306 or another Walkman?**
+No. The tool is guarded to `NW-WM1AM2`. The volume-table identifiers are
+specific to the `icx1298` audio board and do not exist on other codecs.
+
+**I ran `Apply` and nothing sounds different.**
+Reboot — the table is only loaded by init at boot, so the change cannot take
+effect before a restart. Then check `vendor.safe_volume.enabled` and confirm it
+reads `00000000`. If `Apply` printed fewer than 8/8 verified fields, re-run it:
+the spawn step is occasionally flaky and produces no output at all.
+
+**How much louder is it, really?**
+The two output tables differ by roughly 3 dB on average, with the biggest
+difference in the upper volume range, plus the High Gain switch starts working.
+It is a noticeable step, not a doubling of loudness.
+
+**Does it affect battery life, Plexamp, Chrome or streaming?**
+No. It changes audio calibration values only. No background service, process or
+hook is installed — nothing from this tool keeps running.
+
+**Can I undo it?**
+Yes. Run `Rollback` and reboot. It restores the eight fields to the values
+recorded from the tested device and verifies each write.
+
+**Do I need to compile anything?**
+Only if you want to. The APK is built with the Android SDK; a prebuilt, signed
+APK is published under *Releases*. `tools/inject.py` needs Python 3, or use
+`tools/inject.sh` (macOS/Linux) / `tools/inject.ps1` (Windows), which need only
+`adb`.
+
+
 
 ## No third-party IP
 
