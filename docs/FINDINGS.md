@@ -191,6 +191,10 @@ The DAC's log output (`dacdat`) is not captured in logcat, so the loaded table
 cannot be confirmed by log. The property above is the input that boot script
 receives, which is why it is the check we rely on.
 
+`Apply` is idempotent — re-running it on an already-modified device rewrites the
+same values and reports all eight as verified — so it can be used to confirm
+that the configuration is still intact.
+
 **Magnitude:** the two output volume tables differ in 3202 of 15 738 bytes.
 Interpreted as attenuation the EU table is on average about **3.2 dB** quieter,
 with the largest difference in the upper volume range. That is audible but not

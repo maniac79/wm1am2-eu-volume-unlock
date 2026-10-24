@@ -80,6 +80,44 @@ The original values are in `Rollback.java`, so the change is reversible.
 
 ---
 
+## Firmware updates — read this before you update
+
+Sony still ships firmware for some regions (an Asia-region release appeared in
+2026), so the on-device updater is live even though this is an Android 11
+device. **Disable it before a firmware update can land.**
+
+Why: the EU limit is enforced by a boot script and a calibrated volume table
+that ship inside the firmware. An update can replace either of them, can change
+which tables exist, and may or may not preserve the NVRAM fields this tool
+writes. Whether a specific firmware update reverts this change is **untested** —
+proceed as if it will.
+
+```bash
+# disable the Sony updater (reversible)
+adb shell pm disable-user --user 0 com.sony.walkman.systemupdater
+
+# confirm: enabled=3 means disabled-by-user, enabled=1 means active
+adb shell dumpsys package com.sony.walkman.systemupdater | grep -m1 enabled=
+
+# if you ever want it back
+adb shell pm enable com.sony.walkman.systemupdater
+```
+
+Consider disabling Play Store auto-updates too, or the Play Store entirely if
+you do not install apps from it — it is by far the largest background consumer
+on this device and it also auto-updates Chrome and Play services:
+
+```bash
+adb shell pm disable-user --user 0 com.android.vending
+```
+
+After any firmware update, re-run `Read` and check
+`adb shell getprop vendor.safe_volume.enabled`. If it says `01000000`, the cap
+is back and `Apply` needs to be run again.
+
+
+---
+
 ## Usage
 
 ```bash
