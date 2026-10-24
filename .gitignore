@@ -1,0 +1,9 @@
+# build output
+build/
+out/
+*.apk
+
+# local scratch
+*.log
+__pycache__/
+.DS_Store

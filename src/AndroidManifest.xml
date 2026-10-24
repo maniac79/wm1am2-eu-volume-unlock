@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  No components are declared on purpose: this package is never launched by the
+  system. Its classes are started directly by app_process (see tools/inject.py),
+  so it exposes no activities, services, receivers or providers.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.maniac79.nvptool">
+
+    <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="29" />
+
+    <application android:hasCode="true" android:label="nvptool" />
+</manifest>
