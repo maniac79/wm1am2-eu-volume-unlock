@@ -1,0 +1,110 @@
+SONY NW-WM1AM2 - EU VOLUME CAP TOOL
+===================================
+
+What this does
+--------------
+European WM1AM2 players ship with a lower output-volume ceiling than the same
+hardware sold elsewhere. This tool switches the player back to the non-EU
+output-volume settings and re-enables the "High Gain" option.
+
+It changes eight calibration values in the player's factory NVRAM. No root, no
+bootloader unlock, no firmware modification. Option 3 in the menu undoes it.
+
+
+What you need
+-------------
+  - A Sony NW-WM1AM2
+  - A USB cable that carries data (not a charge-only cable)
+  - "adb" (Android Platform Tools) on your computer - see below
+  - About five minutes
+
+
+Step 1 - Do you have adb?
+-------------------------
+Open the menu (see Step 3). If adb is missing, the menu tells you and shows
+these instructions again. Short version:
+
+  Download:  https://developer.android.com/tools/releases/platform-tools
+
+You do NOT need the full Android SDK. Just the Platform Tools package.
+
+After unzipping you get a folder named "platform-tools". Do ONE of these:
+
+  Easy way:   move that folder into THIS folder, so that
+                platform-tools/adb        exists (macOS / Linux)
+                platform-tools\adb.exe    exists (Windows)
+
+  Or:         add the platform-tools folder to your system PATH, then reopen
+              the terminal / this window.
+
+If adb is installed but Windows/macOS cannot find it, the "Easy way" above is
+the most reliable fix - the menu looks for platform-tools right next to itself
+before it looks anywhere else.
+
+Mac note: if double-clicking START-macos.command shows "cannot be opened
+because it is from an unidentified developer", right-click the file, choose
+"Open", and confirm. That is macOS quarantine, not a problem with the file.
+
+
+Step 2 - Prepare the player
+---------------------------
+On the Walkman:
+
+  1. Settings > About device > tap "Build number" seven times
+     (this unlocks Developer options)
+  2. Settings > System > Developer options > enable "USB debugging"
+  3. Connect the USB cable to the computer
+  4. A prompt appears on the player: "Allow USB debugging?"
+     Tick "Always allow from this computer" and tap OK.
+
+If the prompt never appears, unplug and replug the cable. It can take a few
+seconds; sometimes you need to change the USB mode on the player.
+
+
+Step 3 - Run the tool
+---------------------
+  macOS    double-click  START-macos.command
+  Windows  double-click  START-windows.bat
+  Linux    run           ./START-linux.sh
+
+A menu appears:
+
+  1) Check status            read-only; shows the current values
+  2) Enable the fix          writes the values, then offers a reboot
+  3) Restore factory setting undoes everything
+  4) Reboot the player
+  5) Where is adb? / requirements
+
+Start with 1 to see the current state, then use 2.
+
+The helper app does not have to be installed beforehand - the menu offers to
+install it from nvptool.apk when needed.
+
+
+Step 4 - Reboot and check
+-------------------------
+The new volume table is only loaded while the player boots, so a reboot is
+required. The menu offers it.
+
+To confirm afterwards, use option 1 and look for:
+
+    ro.safe_volume.enabled = 00000000     fix is active
+    ro.safe_volume.enabled = 01000000     factory setting (still capped)
+
+Or from a terminal:   adb shell getprop vendor.safe_volume.enabled
+
+
+Good to know
+------------
+  - The change is roughly 3 dB, loudest at the top of the volume range, plus a
+    working High Gain switch. It is a clear step, not a doubling of loudness.
+  - Turn the volume down before testing, then raise it gradually.
+  - A firmware update may undo it. Disabling the Sony updater first is
+    recommended:
+        adb shell pm disable-user --user 0 com.sony.walkman.systemupdater
+  - The change is reversible: menu option 3, then reboot.
+  - Nothing here is Sony software, and no Sony firmware or binaries are
+    included. The tool reads what it needs from your own player.
+
+More detail, the technical writeup and the FAQ:
+  https://github.com/maniac79/wm1am2-eu-volume-unlock

@@ -74,9 +74,17 @@ The original values are in `Rollback.java`, so the change is reversible.
 ## Requirements
 
 * Sony NW-WM1AM2, Android 11, USB debugging enabled.
-* `adb`, a JDK (`javac`, `keytool`), Android SDK build-tools and a platform
-  `android.jar`.
-* Python 3.
+* **`adb` (Android Platform Tools).** Not bundled, deliberately — get it from
+  https://developer.android.com/tools/releases/platform-tools
+  The packaged menu detects it, and if it cannot be found it says exactly what
+  to download and where to put it. The simplest route is to unzip the
+  `platform-tools` folder next to the starter script, where it is picked up
+  automatically.
+
+Only if you build from source:
+
+* JDK (`javac`, `keytool`), Android SDK build-tools and a platform `android.jar`.
+* Python 3, for `tools/inject.py`.
 
 ---
 
@@ -120,16 +128,45 @@ is back and `Apply` needs to be run again.
 
 ## Usage
 
+### Easiest way — download, extract, double-click
+
+Grab the archive for your OS from
+[Releases](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases):
+
+| Archive | Starter |
+|---|---|
+| `wm1am2-nvptool-macos.zip` | `START-macos.command` |
+| `wm1am2-nvptool-windows.zip` | `START-windows.bat` |
+| `wm1am2-nvptool-linux.zip` | `START-linux.sh` |
+
+Extract, double-click the starter, and pick a menu option:
+
+```
+1) Check status            read-only, changes nothing
+2) Enable the fix          writes NVRAM, then offers a reboot
+3) Restore factory setting undo everything
+4) Reboot the player
+5) Where is adb? / requirements
+```
+
+You do **not** need a compiler, JDK or Android SDK for this route, and the menu
+installs the APK for you. All you need is `adb` — see *Requirements*.
+
+Each archive also contains `QUICKSTART.txt`, written for someone who has never
+used `adb` before.
+
+### From source
+
 ```bash
 # 1. build + install the tool (one package, three entry points)
 ./tools/build.sh
 adb install -r out/nvptool.apk
 
 # 2. read-only dump of every relevant NVRAM field, to see the starting state
-python3 tools/inject.py org.maniac79.nvptool.Read org.maniac79.nvptool
+./tools/inject.sh org.maniac79.nvptool.Read
 
 # 3. write the new values; each one is verified by read-back
-python3 tools/inject.py org.maniac79.nvptool.Apply org.maniac79.nvptool
+./tools/inject.sh org.maniac79.nvptool.Apply
 
 # 4. reboot so init reloads the DAC volume table
 adb reboot
@@ -137,6 +174,10 @@ adb reboot
 # 5. check the flag: 00000000 = EU clamp off, 01000000 = still on
 adb shell getprop vendor.safe_volume.enabled
 ```
+
+`tools/inject.ps1` does the same on Windows, `tools/inject.py` on any OS with
+Python 3. All three emit identical payloads.
+
 
 `Apply` prints how many of the eight fields were written and verified. Every
 write is read back and compared, so a silent rejection is not reported as
@@ -192,6 +233,13 @@ tools/build.sh                          build + sign the APK (bash)
 tools/inject.py                         start a class in platform_app (Python)
 tools/inject.sh                         same, macOS/Linux — needs only adb
 tools/inject.ps1                        same, Windows — needs only adb
+packaging/macos/START-macos.command     double-click starter (macOS)
+packaging/linux/START-linux.sh          starter (Linux)
+packaging/windows/START-windows.bat     double-click starter (Windows)
+packaging/common/menu.sh                interactive menu (macOS/Linux)
+packaging/windows/menu.ps1              interactive menu (Windows)
+packaging/common/QUICKSTART.txt         plain-language instructions for users
+packaging/make_release.sh               builds dist/*.zip for a release
 docs/FINDINGS.md                        technical writeup and negative results
 docs/SECURITY.md                        analysis of the vendor HAL access model
 ```
@@ -249,10 +297,17 @@ Yes. Run `Rollback` and reboot. It restores the eight fields to the values
 recorded from the tested device and verifies each write.
 
 **Do I need to compile anything?**
-Only if you want to. The APK is built with the Android SDK; a prebuilt, signed
-APK is published under *Releases*. `tools/inject.py` needs Python 3, or use
-`tools/inject.sh` (macOS/Linux) / `tools/inject.ps1` (Windows), which need only
-`adb`.
+No. Download the archive for your OS from *Releases*, extract it and
+double-click the `START-*` file. That route needs no JDK, no Android SDK and no
+Python — only `adb`, and the menu installs the APK for you. Building from
+source is only needed if you want to change the code.
+
+**The menu says adb was not found — what now?**
+You do not need the full Android SDK, only Platform Tools. Download it from
+https://developer.android.com/tools/releases/platform-tools, unzip it, and drop
+the resulting `platform-tools` folder next to the starter script. The menu looks
+there before anywhere else, so that alone fixes it. Adding the folder to your
+`PATH` works too.
 
 
 
