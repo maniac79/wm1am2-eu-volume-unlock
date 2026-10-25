@@ -333,10 +333,14 @@ function Invoke-NvpClass {
         else { $script:CleanupOk = $false }
         [void](Invoke-Adb '-s' $script:Serial 'shell' "rm -f $claimDir/claim-$RunId-* $claimDir/lock-$RunId")
 
+        # Format contract: the parser requires records at column 0, so every read
+        # requests raw output. Default logcat prefixes each line and would be
+        # rejected - deliberately: a collector that forgets -v raw must fail
+        # closed rather than half-accept an unattributable line.
         $lines = @()
         for ($i = 0; $i -lt 20; $i++) {
             Start-Sleep -Seconds 1
-            $raw = Invoke-Adb '-s' $script:Serial 'shell' 'logcat -d -s NVPTOOL:V'
+            $raw = Invoke-Adb '-s' $script:Serial 'shell' 'logcat -d -v raw -s NVPTOOL:V'
             if ($raw.Code -ne 0) { Fail 'logcat failed: operation outcome unknown' 4 }
             $lines = @($raw.Output | Where-Object { $_ -match [regex]::Escape("run=$RunId ") })
             if ($lines | Where-Object { $_ -match 'ev=summary' }) { break }
@@ -344,7 +348,7 @@ function Invoke-NvpClass {
         # Settle window, then one final read: the snapshot must cover the whole
         # window, so a later execution cannot fall outside it.
         if ($script:SettleSecs -gt 0) { Start-Sleep -Seconds $script:SettleSecs }
-        $raw = Invoke-Adb '-s' $script:Serial 'shell' 'logcat -d -s NVPTOOL:V'
+        $raw = Invoke-Adb '-s' $script:Serial 'shell' 'logcat -d -v raw -s NVPTOOL:V'
         if ($raw.Code -ne 0) { Fail 'logcat failed: operation outcome unknown' 4 }
         $lines = @($raw.Output | Where-Object { $_ -match [regex]::Escape("run=$RunId ") })
         $resultFile = Join-Path $script:RunDir "result-$RunId.txt"
@@ -378,6 +382,14 @@ function Get-Token([string]$Line, [string]$Name) {
     return ''
 }
 
+function Write-SkipNote($Result) {
+    # A losing Read process does no work (Read.java:23-28); say so instead of
+    # letting it look like a silent extra execution.
+    if ($null -ne $Result -and $Result.PSObject.Properties['Skipped'] -and $Result.Skipped -gt 0) {
+        Write-Output "note: $($Result.Skipped) process(es) lost the claim and did no work"
+    }
+}
+
 function Assert-Result {
     param([string]$Op, [string]$RunId, [string]$File)
 
@@ -392,7 +404,9 @@ function Assert-Result {
     $order = New-Object System.Collections.Generic.List[string]
     for ($li = 0; $li -lt $lines.Count; $li++) {
         $line = $lines[$li]
-        if ($line -notmatch '^NVPTOOL_RESULT ') { Fail 'unknown record in result: outcome UNKNOWN' 4 }
+        # Ignore logcat noise (separator banners, other tags). Only a record that
+        # starts at column 0 can be ours; anything else is never accepted.
+        if ($line -notmatch '^NVPTOOL_RESULT ') { continue }
         $t = @{}
         foreach ($tok in ($line -split ' ')) {
             if ($tok -match '^([a-z_]+)=(.*)$') { $t[$Matches[1]] = $Matches[2] }
@@ -403,7 +417,7 @@ function Assert-Result {
         if (-not $p) { Fail 'malformed result (record without pid): outcome UNKNOWN' 4 }
         if (-not $execs.Contains($p)) {
             $execs[$p] = [pscustomobject]@{ Begin = $null; Sum = $null; BeginLn = -1; SumLn = -1
-                                           Fields = @{}; DuplicateIndex = $false }
+                                           Fields = @{}; DuplicateIndex = $false; Skip = 0; Other = 0 }
             [void]$order.Add($p)
         }
         $e = $execs[$p]
@@ -422,18 +436,38 @@ function Assert-Result {
                 if ($e.Fields.ContainsKey($idx)) { $e.DuplicateIndex = $true }
                 else { $e.Fields[$idx] = $t['val'] }
             }
-            'note' { }
+            'note' {
+                if ($t['msg'] -eq 'duplicate_skipped') { $e.Skip++ } else { $e.Other++ }
+            }
             default { Fail 'unknown record type in result: outcome UNKNOWN' 4 }
         }
     }
 
     if ($order.Count -eq 0) { Fail 'no execution record: outcome UNKNOWN' 4 }
 
+    # Read.java emits exactly one duplicate_skipped note from the process that
+    # lost the claim: it does no work, so that pid has no begin, no fields and no
+    # summary. That is a workless skip, not an execution. Any other pid without an
+    # execution is an unfinished or foreign record and is rejected.
+    $execOrder = New-Object System.Collections.Generic.List[string]
+    $skipped = 0
+    foreach ($p in $order) {
+        $e = $execs[$p]
+        $hasExec = ($null -ne $e.Begin) -or ($null -ne $e.Sum) -or ($e.Fields.Count -gt 0)
+        if (-not $hasExec) {
+            if ($e.Skip -gt 0 -and $e.Other -eq 0 -and $Op -eq 'read') { $skipped++; continue }
+            Fail "record without an execution (pid $p): outcome UNKNOWN" 4
+        }
+        if ($e.Skip -gt 0) { Fail "a skipped process also reported work (pid $p): outcome UNKNOWN" 4 }
+        [void]$execOrder.Add($p)
+    }
+    if ($execOrder.Count -eq 0) { Fail 'no winning execution record: outcome UNKNOWN' 4 }
+
     $ok = 0; $aborts = 0; $bad = 0; $writes = @()
     $verified = $null; $total = $null; $firstOkPid = $null
     $badStatus = ''; $badReason = ''; $badWritten = ''; $badVerified = ''; $badTotal = ''
 
-    foreach ($p in $order) {
+    foreach ($p in $execOrder) {
         $e = $execs[$p]
         if ($null -eq $e.Begin) { Fail "summary without begin (pid $p): outcome UNKNOWN" 4 }
         if ($null -eq $e.Sum) { Fail "incomplete execution (pid $p has no terminal summary): outcome UNKNOWN" 4 }
@@ -509,19 +543,21 @@ function Assert-Result {
         return [pscustomobject]@{
             Status = $badStatus; Written = $badWritten; Verified = $badVerified
             Total = $badTotal; Reason = $badReason; Fields = @(); Duplicates = $bad - 1
+            Skipped = $skipped
         }
     }
     if ($ok -eq 0) {
         return [pscustomobject]@{
             Status = 'ABORT'; Written = '0'; Verified = '0'; Total = '8'
             Reason = 'state_changed_since_backup'; Fields = @(); Duplicates = $aborts - 1
+            Skipped = $skipped
         }
     }
 
     $keepFields = @()
     if ($Op -eq 'read') {
         for ($i = 0; $i -lt 8; $i++) {
-            $vals = @($order | ForEach-Object { $execs[$_].Fields["$i"] } | Sort-Object -Unique)
+            $vals = @($execOrder | ForEach-Object { $execs[$_].Fields["$i"] } | Sort-Object -Unique)
             if ($vals.Count -ne 1) { Fail "duplicate executions disagree on field $i" 4 }
         }
         $keepFields = @($lines | Where-Object { $_ -match ' ev=field ' -and (Get-Token $_ 'pid') -eq $firstOkPid })
@@ -530,7 +566,7 @@ function Assert-Result {
     $written = if ((@($writes | Sort-Object -Unique)).Count -eq 1) { "$($writes[0])" } else { ($writes -join ',') }
     return [pscustomobject]@{
         Status = 'OK'; Written = $written; Verified = $verified; Total = $total
-        Reason = '-'; Fields = $keepFields; Duplicates = $ok + $aborts - 1
+        Reason = '-'; Fields = $keepFields; Duplicates = $ok + $aborts - 1; Skipped = $skipped
     }
 }
 
@@ -782,6 +818,7 @@ function Invoke-ReadCmd {
     [void](Load-Backup $path)
     Assert-Cleanup 'read'
     Write-Output "read OK ($kind configuration)"
+    Write-SkipNote $res
     Write-Output "backup: $path"
     if ($res.Duplicates -gt 0) {
         Write-Output ''
@@ -839,6 +876,7 @@ function Invoke-ApplyCmd {
 
     Assert-Cleanup 'apply'
     Write-Output "apply OK - $($res2.Verified)/$($res2.Total) verified (wrote $($res2.Written))"
+    Write-SkipNote $res2
     Write-Output ''
     Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload, so apps (including Settings) will not open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.'
     Write-Output 'Do it now:  nvptool.ps1 reboot'

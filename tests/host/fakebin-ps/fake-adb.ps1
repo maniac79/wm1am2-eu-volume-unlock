@@ -52,12 +52,17 @@ function New-ResultLines([string]$Payload) {
     $head = "NVPTOOL_RESULT v=1 schema=1 tool=0.2.6 run=$run op=$eop pid=$($script:FakePid)"
     $out = @()
     if ($resp -eq 'noout') { return $out }
+    # Read.java:23-28 - the losing process emits only this note, under its own
+    # PID: no begin, no fields, no summary.
+    if ($env:FAKE_SKIP_ONLY -eq '1') { return @("$head ev=note msg=duplicate_skipped") }
     $out += "$head ev=begin"
+    # FAKE_SKIP_WINNER=1: contradiction - a process that also did work claims to
+    # have been skipped.
+    if ($env:FAKE_SKIP_WINNER -eq '1') { $out += "$head ev=note msg=duplicate_skipped" }
     # Production emits the claim notes from Read only; the write classes never do.
     if ($op -eq 'read' -and $env:FAKE_NO_CLAIM -ne '1') {
         $out += "$head ev=note msg=claim_acquired mode=file"
     }
-    if ($env:FAKE_DUP_SKIPPED -eq '1') { $out += "$head ev=note msg=duplicate_skipped" }
     if ($resp -eq 'truncated') { return $out }
     if ($env:FAKE_BEGIN_ONLY -eq '1') { return $out }
 
@@ -136,7 +141,14 @@ if ($sub -eq '-s') {
                 if ($env:FAKE_LATE_RESPONSE) { $env:FAKE_RESPONSE_WRITE = $env:FAKE_LATE_RESPONSE }
                 if (($env:FAKE_DUP_ABORT -eq '1') -and $pushIsApply) { $env:FAKE_RESPONSE_WRITE = 'abort' }
                 $script:FakePid = if ($env:FAKE_PID2) { [int]$env:FAKE_PID2 } else { 4202 }
-                Set-Content -LiteralPath (Join-Path $S 'pending_late') -Value (New-ResultLines $rest[1])
+                $lateLines = @(New-ResultLines $rest[1])
+                if ($env:FAKE_DUP_BEGIN_ONLY -eq '1') { $lateLines = @($lateLines[0]) }
+                if ($env:FAKE_SKIP_LATE -eq '1') {
+                    $env:FAKE_SKIP_ONLY = '1'
+                    $lateLines = @(New-ResultLines $rest[1])
+                    Remove-Item Env:FAKE_SKIP_ONLY
+                }
+                Set-Content -LiteralPath (Join-Path $S 'pending_late') -Value $lateLines
                 $script:FakePid = if ($env:FAKE_PID) { [int]$env:FAKE_PID } else { 4201 }
                 $env:FAKE_RESPONSE_WRITE = $savedResp
                 Remove-Item -LiteralPath (Join-Path $S 'lc_reads') -ErrorAction SilentlyContinue
@@ -213,7 +225,16 @@ if ($sub -eq '-s') {
                 Remove-Item -LiteralPath $late -Force
             }
         }
-        if (Test-Path $l) { Get-Content -LiteralPath $l }
+        # Honour the requested format, like a real device. Without -v raw adb
+        # prefixes threadtime metadata, which the strict parsers must reject
+        # (FAKE_IGNORE_RAW=1 models a device that ignores the request).
+        if (Test-Path $l) {
+            if ($env:FAKE_IGNORE_RAW -eq '1' -or $cmd -notmatch '-v raw') {
+                Get-Content -LiteralPath $l | ForEach-Object { "10-25 15:17:01.123  4201  4201 I NVPTOOL : $_" }
+            } else {
+                Get-Content -LiteralPath $l
+            }
+        }
         exit 0
     }
     if ($cmd -match 'settings get global hidden_api_blacklist_exemptions') {

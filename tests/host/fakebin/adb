@@ -78,6 +78,12 @@ emit_results() {
     fi
     local head="NVPTOOL_RESULT v=1 schema=1 tool=0.2.6 run=$run op=$eop pid=${FAKE_PID:-4201}"
     local begin="$head ev=begin"
+    # Read.java:23-28 - the losing process does no work and emits one note under
+    # its own PID: no begin, no fields, no summary.
+    if [ "${FAKE_SKIP_ONLY:-0}" = "1" ]; then
+        printf '%s ev=note msg=duplicate_skipped\n' "$head"
+        return 0
+    fi
     case "$RESP" in
         noout) return 0 ;;
         truncated) printf '%s\n' "$begin" ; return 0 ;;
@@ -94,12 +100,15 @@ emit_results() {
     esac
 
     printf '%s\n' "$begin"
+    # FAKE_SKIP_WINNER=1: contradiction - a process that also did work claims to
+    # have been skipped.
+    if [ "${FAKE_SKIP_WINNER:-0}" = "1" ]; then
+        printf '%s ev=note msg=duplicate_skipped\n' "$head"
+    fi
     # Production emits the claim notes from Read only; the write classes never do.
     if [ "$id" = "read" ] && [ "${FAKE_NO_CLAIM:-0}" != "1" ]; then
         printf '%s ev=note msg=claim_acquired mode=file\n' "$head"
     fi
-    [ "${FAKE_DUP_SKIPPED:-0}" = "1" ] && \
-        printf '%s ev=note msg=duplicate_skipped\n' "$head"
 
     # An execution that died mid-flight: begin, then nothing.
     [ "${FAKE_BEGIN_ONLY:-0}" = "1" ] && return 0
@@ -202,7 +211,17 @@ handle_shell() {
                     rm -f "$S/pending_late"
                 fi
             fi
-            [ -f "$S/logcat" ] && cat "$S/logcat" ;;
+            # Honour the requested format, like a real device. Without -v raw
+            # adb prints threadtime metadata in front of every message, which the
+            # strict parsers must reject (FAKE_IGNORE_RAW=1 models a device that
+            # ignores the request).
+            if [ -f "$S/logcat" ]; then
+                if [ "${FAKE_IGNORE_RAW:-0}" = "1" ] ||                    ! printf '%s' "$line" | grep -q -- '-v raw'; then
+                    awk '{ print "10-25 15:17:01.123  4201  4201 I NVPTOOL : " $0 }' "$S/logcat"
+                else
+                    cat "$S/logcat"
+                fi
+            fi ;;
         *"settings list global"*)
             [ "${FAKE_SETTINGS_LIST_FAIL:-0}" = 1 ] && exit 1
             [ -f "$S/setting" ] && printf 'hidden_api_blacklist_exemptions=%s\n' "$(cat "$S/setting")" ;;
@@ -282,6 +301,11 @@ if [ "$sub" = "-s" ]; then
             fi
             FAKE_PID="${FAKE_PID2:-4202}" FAKE_RESPONSE_WRITE="$late_resp" \
                 emit_results "$S/payload.txt" > "$S/pending_late"
+            # Optionally: the second execution lost the claim and did no work.
+            if [ "${FAKE_SKIP_LATE:-0}" = "1" ]; then
+                FAKE_PID="${FAKE_PID2:-4202}" FAKE_SKIP_ONLY=1 \
+                    emit_results "$S/payload.txt" > "$S/pending_late"
+            fi
             # Optionally: the second execution died after its begin record.
             if [ "${FAKE_DUP_BEGIN_ONLY:-0}" = "1" ]; then
                 head -n 1 "$S/pending_late" > "$S/pending_late.tmp" && \

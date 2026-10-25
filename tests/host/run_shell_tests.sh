@@ -35,7 +35,7 @@ newenv() {
     # Bind the mock explicitly: the tool refuses a relative path, so it can never
     # silently fall back to a real adb found on PATH.
     export NVPTOOL_ADB="$FAKEBIN/adb"
-    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK FAKE_DUP_LATE FAKE_PID FAKE_PID2 FAKE_NO_CLAIM FAKE_DUP_SKIPPED FAKE_DUP_ABORT FAKE_APPLY_NOOP FAKE_RESTORE_NOOP FAKE_BEGIN_ONLY FAKE_APPLY_WRITTEN FAKE_DUP_BEGIN_ONLY FAKE_OP_LIE FAKE_LATE_RESPONSE 2>/dev/null || true
+    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK FAKE_DUP_LATE FAKE_PID FAKE_PID2 FAKE_NO_CLAIM FAKE_DUP_SKIPPED FAKE_DUP_ABORT FAKE_APPLY_NOOP FAKE_RESTORE_NOOP FAKE_BEGIN_ONLY FAKE_APPLY_WRITTEN FAKE_DUP_BEGIN_ONLY FAKE_OP_LIE FAKE_LATE_RESPONSE FAKE_IGNORE_RAW FAKE_SKIP_LATE FAKE_SKIP_WINNER FAKE_SKIP_ONLY 2>/dev/null || true
     # The write paths are on a safety hold, so the suites exercise their logic
     # behind the documented bypass. The hold itself is tested on its own.
     export NVPTOOL_ALLOW_UNVALIDATED_WRITE=1
@@ -416,6 +416,40 @@ echo "== two identical reference executions are accepted =="
 newenv; export FAKE_DUP_LATE=1; nv restore-reference
 expect_rc "duplicated reference restore rc" 0 "$RC"
 expect_has "reference restore reported" "reference profile restored" "$OUT"
+
+echo "== collector format: prefixed logcat output is rejected =="
+newenv; export FAKE_IGNORE_RAW=1; nv read
+expect_rcnz "prefixed buffer rejected" "$RC"
+expect_has "no records means no execution" "no_execution" "$OUT"
+expect_hasnt "prefixed buffer is not a read success" "read OK" "$OUT"
+
+echo "== a process that lost the claim is a workless skip =="
+newenv; export FAKE_DUP_LATE=1 FAKE_SKIP_LATE=1; nv read
+expect_rc "skip beside a winner rc" 0 "$RC"
+expect_has "winner still reported" "read OK" "$OUT"
+expect_has "skip reported separately" "lost the claim" "$OUT"
+
+echo "== a skip record on a process that also did work is rejected =="
+newenv; export FAKE_SKIP_WINNER=1; nv read
+expect_rcnz "contradictory skip rejected" "$RC"
+expect_has "contradictory skip named" "contradictory_skip" "$OUT"
+
+echo "== a skip without any winning execution is rejected =="
+newenv; export FAKE_RESPONSE=noout FAKE_DUP_LATE=1 FAKE_SKIP_LATE=1; nv read
+expect_rcnz "skip without winner rejected" "$RC"
+expect_has "outcome reported as unknown" "no completion record" "$OUT"
+expect_hasnt "skip is not reported as a read" "read OK" "$OUT"
+
+echo "== the parser itself refuses a snapshot holding only a skip record =="
+newenv
+RUNDIR="$T/rundir"; mkdir -p "$RUNDIR"
+printf '%s\n' \
+    "NVPTOOL_RESULT v=1 schema=1 tool=0.2.6 run=R1 op=read pid=4202 ev=note msg=duplicate_skipped" \
+    > "$RUNDIR/result.txt"
+POUT=$(NL_RUN_DIR="$RUNDIR" bash -c \
+    '. ./tools/lib.sh; nl_parse read R1; printf " rc=%s err=%s" "$?" "$NL_PARSE_ERR"' 2>&1)
+expect_has "skip-only snapshot refused" "rc=3" "$POUT"
+expect_has "skip-only snapshot is not a success" "err=no_winning_execution" "$POUT"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

@@ -87,7 +87,8 @@ function New-Env {
                      'FAKE_SETTINGS_LIST_FAIL', 'FAKE_START_FAIL', 'FAKE_APP_MISSING',
                      'FAKE_INSTALLED_APK', 'FAKE_PULL_FAIL', 'FAKE_INSTALL_FAIL',
                      'NVPTOOL_SERIAL', 'FAKE_DUP_LATE', 'FAKE_PID', 'FAKE_PID2', 'FAKE_NO_CLAIM', 'FAKE_DUP_SKIPPED', 'FAKE_DUP_ABORT',
-                     'FAKE_APPLY_NOOP', 'FAKE_RESTORE_NOOP', 'FAKE_BEGIN_ONLY', 'FAKE_APPLY_WRITTEN', 'FAKE_DUP_BEGIN_ONLY', 'FAKE_OP_LIE', 'FAKE_LATE_RESPONSE',
+                     'FAKE_APPLY_NOOP', 'FAKE_RESTORE_NOOP', 'FAKE_BEGIN_ONLY', 'FAKE_APPLY_WRITTEN', 'FAKE_DUP_BEGIN_ONLY', 'FAKE_OP_LIE', 'FAKE_LATE_RESPONSE', 'FAKE_IGNORE_RAW',
+                     'FAKE_SKIP_LATE', 'FAKE_SKIP_WINNER', 'FAKE_SKIP_ONLY',
                      'NVPTOOL_ALLOW_UNVALIDATED_WRITE',
                      'NVPTOOL_ALLOW_NON_BASELINE_RESTORE')) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
@@ -451,6 +452,33 @@ Write-Host '== two identical reference executions are accepted =='
 $r = Run-Nv @('restore-reference')
 Check 'duplicated reference restore rc 0' ($r.Rc -eq 0)
 Check 'reference restore reported' ($r.Out -match 'reference profile restored')
+
+Write-Host '== collector format: prefixed logcat output is rejected =='
+[void](New-Env); $env:FAKE_IGNORE_RAW = '1'
+$r = Run-Nv @('read')
+Check 'prefixed buffer rejected' ($r.Rc -ne 0)
+Check 'no records means no execution' ($r.Out -match 'no execution record|no_execution')
+Check 'prefixed buffer is not a read success' (-not ($r.Out -match 'read OK'))
+
+Write-Host '== a process that lost the claim is a workless skip =='
+[void](New-Env); $env:FAKE_DUP_LATE = '1'; $env:FAKE_SKIP_LATE = '1'
+$r = Run-Nv @('read')
+Check 'skip beside a winner rc 0' ($r.Rc -eq 0)
+Check 'winner still reported' ($r.Out -match 'read OK')
+Check 'skip reported separately' ($r.Out -match 'lost the claim')
+
+Write-Host '== a skip record on a process that also did work is rejected =='
+[void](New-Env); $env:FAKE_SKIP_WINNER = '1'
+$r = Run-Nv @('read')
+Check 'contradictory skip rejected' ($r.Rc -ne 0)
+Check 'contradictory skip named' ($r.Out -match 'skipped process also reported work')
+
+Write-Host '== a skip without any winning execution is rejected =='
+[void](New-Env); $env:FAKE_RESPONSE = 'noout'; $env:FAKE_DUP_LATE = '1'; $env:FAKE_SKIP_LATE = '1'
+$r = Run-Nv @('read')
+Check 'skip without winner rejected' ($r.Rc -ne 0)
+Check 'outcome reported as unknown' ($r.Out -match 'no completion record|no execution record')
+Check 'skip is not reported as a read' (-not ($r.Out -match 'read OK'))
 
 Write-Host "PASS=$($script:Pass) FAIL=$($script:Fail)"
 Remove-Item -LiteralPath $FixtureRoot -Recurse -Force -ErrorAction SilentlyContinue

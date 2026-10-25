@@ -351,15 +351,19 @@ nl_inject() {   # nl_inject <class> <op> <runid> [tool args...]
     # Bounded wait for the first summary, then a settle window, then ONE final
     # read. The snapshot must cover the whole window: a summary that arrives
     # after the host stopped reading is exactly what hid the duplicate execution.
+# Format contract: the parser requires records to start at column 0, so every
+# read of the buffer requests raw output. Default logcat output prefixes each
+# line with date/time/pid/priority/tag, and such a line is rejected: a
+# collector that forgets -v raw must fail closed, never be half-accepted.
     local i lines
     lines=""
     for i in $(seq 1 20); do
         sleep 1
-        lines=$(nl_adb shell "logcat -d -s $NL_TAG:V" 2>/dev/null | tr -d '\r' | grep -F "run=$run " || true)
+        lines=$(nl_adb shell "logcat -d -v raw -s $NL_TAG:V" 2>/dev/null | tr -d '\r' | grep -F "run=$run " || true)
         if printf '%s' "$lines" | grep -q "ev=summary"; then break; fi
     done
     if [ "${NL_SETTLE_SECS}" -gt 0 ]; then sleep "$NL_SETTLE_SECS"; fi
-    lines=$(nl_adb shell "logcat -d -s $NL_TAG:V" 2>/dev/null | tr -d '\r' | grep -F "run=$run " || true)
+    lines=$(nl_adb shell "logcat -d -v raw -s $NL_TAG:V" 2>/dev/null | tr -d '\r' | grep -F "run=$run " || true)
     printf '%s\n' "$lines" > "$NL_RUN_DIR/result.txt"
 
     if [ "$file_clean" = 1 ] && [ "$setting_clean" = 1 ]; then
@@ -441,15 +445,36 @@ function fail(code) { if (err == "") err = code }
         tt[p] = tok($0, "total");   rs[p] = tok($0, "reason")
         next
     }
-    if (has($0, "ev=note")) next
+    if (has($0, "ev=note")) {
+        m = tok($0, "msg")
+        if (m == "duplicate_skipped") sk[p]++
+        else ot[p]++
+        next
+    }
     fail("unknown_record")
 }
 END {
     if (err != "") { print "ERR " err; exit }
     if (n == 0) { print "ERR no_execution"; exit }
 
+    # Read.java emits exactly one duplicate_skipped note from a process that lost
+    # the claim: it does no work, so that pid has no begin, no fields, no summary.
+    # Such a pid is a workless skip, not an execution. Anything else carrying no
+    # execution is an unfinished or foreign record and is rejected.
+    nx = 0; nskip = 0
     for (k = 1; k <= n; k++) {
         p = order[k]
+        if (b[p] + s[p] + fc[p] == 0) {
+            if (sk[p] > 0 && ot[p] == 0 && want_op == "read") { nskip++; continue }
+            print "ERR record_without_execution"; exit
+        }
+        if (sk[p] > 0) { print "ERR contradictory_skip"; exit }
+        exec[++nx] = p
+    }
+    if (nx == 0) { print "ERR no_winning_execution"; exit }
+
+    for (k = 1; k <= nx; k++) {
+        p = exec[k]
         if (b[p] == 0) { print "ERR summary_without_begin"; exit }
         if (b[p] > 1)  { print "ERR duplicate_begin"; exit }
         if (s[p] == 0) { print "ERR incomplete_execution"; exit }
@@ -458,8 +483,8 @@ END {
     }
 
     nok = 0; nab = 0; nbad = 0; wl = ""; ver = ""; tot = ""; badst = ""; badrs = ""
-    for (k = 1; k <= n; k++) {
-        p = order[k]
+    for (k = 1; k <= nx; k++) {
+        p = exec[k]
         if (!isnum(wr[p]) || !isnum(vf[p]) || !isnum(tt[p])) { print "ERR bad_counters"; exit }
         if (tt[p] + 0 != 8) { print "ERR bad_total"; exit }
         if (st[p] != "OK" && st[p] != "ABORT" && st[p] != "FATAL" && st[p] != "REFUSED" && st[p] != "INCOMPLETE") {
@@ -506,22 +531,22 @@ END {
     }
 
     if (nbad > 0 && nok > 0) { print "ERR contradictory_status"; exit }
-    if (nbad > 0) { print "STATUS " badst " " badwr " " badvf " " badtt " " (badrs == "" ? "-" : badrs) " " n; exit }
+    if (nbad > 0) { print "STATUS " badst " " badwr " " badvf " " badtt " " (badrs == "" ? "-" : badrs) " " nx; exit }
     if (nok == 0 && nab > 0) { print "STATUS ABORT 0 0 8 state_changed_since_backup " n; exit }
     if (nok == 0) { print "ERR no_successful_execution"; exit }
 
     if (want_op == "read") {
         for (i = 0; i < 8; i++) {
             ref = ""; first = 1
-            for (k = 1; k <= n; k++) {
-                p = order[k]
+            for (k = 1; k <= nx; k++) {
+                p = exec[k]
                 if (st[p] != "OK") continue
                 if (first) { ref = fv[p, i]; first = 0 }
                 else if (fv[p, i] != ref) { print "ERR value_mismatch_" i; exit }
             }
         }
     }
-    print "OK " wl " " ver " " tot " " n " " (n - 1)
+    print "OK " wl " " ver " " tot " " nx " " (nx - 1) " " nskip
 }
 ' "$3"
 }
@@ -529,7 +554,7 @@ END {
 nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
     local op="$1" run="$2" f="$NL_RUN_DIR/result.txt" out kind
     NL_PARSE_ERR=""; NL_STATUS=""; NL_WRITTEN=""; NL_VERIFIED=""; NL_TOTAL=""
-    NL_REASON=""; NL_FIELDS=0; NL_DUPLICATES=0
+    NL_REASON=""; NL_FIELDS=0; NL_DUPLICATES=0; NL_SKIPPED=0
 
     [ -s "$f" ] || { NL_PARSE_ERR="no_output"; return 3; }
 
@@ -539,12 +564,15 @@ nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
         OK)
             set -- $out
             NL_STATUS=OK; NL_WRITTEN=$2; NL_VERIFIED=$3; NL_TOTAL=$4
-            NL_DUPLICATES=$6
+            NL_DUPLICATES=$6; NL_SKIPPED=$7
             NL_FIELDS=$(grep -c 'ev=field' "$f" || true)
             if [ "$NL_DUPLICATES" != "0" ]; then
-                printf 'note: %s duplicate execution(s); every execution was reconciled
-' \
+                printf 'note: %s duplicate execution(s); every execution was reconciled\n' \
                     "$NL_DUPLICATES" >&2
+            fi
+            if [ "$NL_SKIPPED" != "0" ]; then
+                printf 'note: %s process(es) lost the claim and did no work\n' \
+                    "$NL_SKIPPED" >&2
             fi
             return 0 ;;
         STATUS)
