@@ -16,7 +16,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------- constants
-$ToolVersion = '1.1.0'
+$ToolVersion = '0.2.0'
 $Schema      = '1'
 $Pkg         = 'org.maniac79.nvptool'
 $Hal         = '/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk'

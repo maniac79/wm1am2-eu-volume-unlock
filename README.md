@@ -234,7 +234,8 @@ is back and `Apply` needs to be run again.
 ### Easiest way — download, extract, double-click
 
 Grab the archive for your OS from
-[Releases](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases):
+the [v0.2.0 release](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.0)
+(this is the **only** published download; older previews have been withdrawn):
 
 | Archive | Starter |
 |---|---|
