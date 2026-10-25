@@ -22,6 +22,12 @@ $NV   = Join-Path $FixtureRoot 'nvptool.ps1'
 $INJ  = Join-Path $Root 'tools/inject.ps1'
 $Fake = Join-Path $Root 'tests/host/fakebin-ps/fake-adb.ps1'
 
+# Isolated temp base for this run: the tool takes its lock under TMPDIR, so a
+# killed run must not poison the next one.
+$script:BaseTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("nvpbase-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+New-Item -ItemType Directory -Force -Path $script:BaseTmp | Out-Null
+$env:TMPDIR = $script:BaseTmp
+
 function Resolve-HostExe([string]$Want) {
     if ($Want -eq 'auto') {
         $p = (Get-Process -Id $PID).Path
@@ -68,7 +74,7 @@ function Check([string]$Name, [bool]$Cond) {
 }
 
 function New-Env {
-    $t = Join-Path ([System.IO.Path]::GetTempPath()) ("npt-" + [guid]::NewGuid().ToString('N'))
+    $t = Join-Path $script:BaseTmp ("npt-" + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $t | Out-Null
     $env:FAKE_STATE_DIR = Join-Path $t 'state'
     $env:NVPTOOL_BACKUP_DIR = Join-Path $t 'backups'
@@ -81,6 +87,7 @@ function New-Env {
                      'FAKE_SETTINGS_LIST_FAIL', 'FAKE_START_FAIL', 'FAKE_APP_MISSING',
                      'FAKE_INSTALLED_APK', 'FAKE_PULL_FAIL', 'FAKE_INSTALL_FAIL',
                      'NVPTOOL_SERIAL', 'FAKE_DUP_LATE', 'FAKE_PID', 'FAKE_PID2', 'FAKE_NO_CLAIM', 'FAKE_DUP_SKIPPED', 'FAKE_DUP_ABORT',
+                     'FAKE_APPLY_NOOP', 'FAKE_RESTORE_NOOP', 'FAKE_BEGIN_ONLY', 'FAKE_APPLY_WRITTEN', 'FAKE_DUP_BEGIN_ONLY', 'FAKE_OP_LIE',
                      'NVPTOOL_ALLOW_UNVALIDATED_WRITE',
                      'NVPTOOL_ALLOW_NON_BASELINE_RESTORE')) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
@@ -380,19 +387,6 @@ Check 'read result still reported' ($r.Out -match 'read OK')
 Check 'duplicate count surfaced' ($r.Out -match 'duplicate device execution')
 Check 'reboot required stated' ($r.Out -match 'REBOOT REQUIRED')
 
-Write-Host '== a run without the claim record is rejected =='
-[void](New-Env); $env:FAKE_NO_CLAIM = '1'
-$r = Run-Nv @('read')
-Check 'missing claim rc 4' ($r.Rc -eq 4)
-Check 'missing guard named' ($r.Out -match 'single-execution guard')
-Check 'missing claim no success' (-not ($r.Out -match 'read OK'))
-
-Write-Host '== a claimed-out duplicate is reported, not fatal =='
-[void](New-Env); $env:FAKE_DUP_SKIPPED = '1'
-$r = Run-Nv @('read')
-Check 'claimed duplicate rc 0' ($r.Rc -eq 0)
-Check 'duplicate is counted' ($r.Out -match 'claimed out')
-
 Write-Host '== a duplicate execution that aborted because the first already wrote is benign =='
 [void](New-Env); $env:FAKE_DUP_ABORT = '1'
 $r = Run-Nv @('apply')
@@ -400,14 +394,57 @@ Check 'apply with aborting duplicate rc 0' ($r.Rc -eq 0)
 Check 'apply still reports verified' ($r.Out -match 'apply OK')
 Check 'apply states the reboot step' ($r.Out -match 'REBOOT REQUIRED')
 
-Write-Host '== a duplicated restore-reference is accepted when benign =='
+Write-Host ''
+Write-Host '== reconciliation: an execution without a terminal summary is rejected =='
+[void](New-Env); $env:FAKE_BEGIN_ONLY = '1'
+$r = Run-Nv @('read')
+Check 'begin without summary rejected' ($r.Rc -ne 0)
+Check 'incomplete execution named' ($r.Out -match 'incomplete execution|no completion record')
+Check 'no success claim for partial execution' (-not ($r.Out -match 'read OK'))
+
+Write-Host '== reconciliation: duplicate summaries are rejected =='
+[void](New-Env); $env:FAKE_RESPONSE = 'dup'
+$r = Run-Nv @('read')
+Check 'duplicate summary rejected' ($r.Rc -ne 0)
+Check 'duplicate summary named' ($r.Out -match 'duplicate summary')
+
+Write-Host '== reconciliation: a record for another operation is rejected =='
+[void](New-Env); $env:FAKE_OP_LIE = '1'
+$r = Run-Nv @('read')
+Check 'operation mismatch rejected' ($r.Rc -ne 0)
+Check 'operation mismatch named' ($r.Out -match 'operation mismatch')
+
+Write-Host '== reconciliation: impossible counters are rejected =='
+[void](New-Env); $env:FAKE_APPLY_WRITTEN = '9'
+$r = Run-Nv @('apply')
+Check 'written beyond verified rejected' ($r.Rc -ne 0)
+Check 'inconsistent counters named' ($r.Out -match 'counters')
+
+Write-Host '== apply accepts the digest abort and reports the real write count =='
+[void](New-Env); $env:FAKE_DUP_ABORT = '1'
+$r = Run-Nv @('apply')
+Check 'apply with digest abort rc 0' ($r.Rc -eq 0)
+Check 'apply reports eight writes' ($r.Out -match 'wrote 8')
+Check 'apply states the reboot step' ($r.Out -match 'REBOOT REQUIRED')
+
+Write-Host '== a genuine no-op reports zero writes =='
+[void](New-Env); $env:FAKE_APPLY_NOOP = '1'
+$r = Run-Nv @('apply')
+Check 'no-op apply rc 0' ($r.Rc -eq 0)
+Check 'no-op reports zero writes' ($r.Out -match 'wrote 0')
+
+Write-Host '== an abort is not acceptable outside apply =='
 [void](New-Env); $env:FAKE_DUP_ABORT = '1'
 $r = Run-Nv @('restore-reference')
-Check 'restore-reference with duplicate rc 0' ($r.Rc -eq 0)
-Check 'restore-reference still reports verified' ($r.Out -match 'reference profile restored')
-Check 'restore-reference states the reboot step' ($r.Out -match 'REBOOT REQUIRED')
+Check 'abort on restore-reference rejected' ($r.Rc -ne 0)
+Check 'no reference success claim' (-not ($r.Out -match 'reference profile restored'))
 
-Write-Host ''
+Write-Host '== two identical reference executions are accepted =='
+[void](New-Env); $env:FAKE_DUP_LATE = '1'
+$r = Run-Nv @('restore-reference')
+Check 'duplicated reference restore rc 0' ($r.Rc -eq 0)
+Check 'reference restore reported' ($r.Out -match 'reference profile restored')
+
 Write-Host "PASS=$($script:Pass) FAIL=$($script:Fail)"
 Remove-Item -LiteralPath $FixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 if ($script:Fail -ne 0) {

@@ -18,8 +18,12 @@ expect_hasnt() { if printf '%s' "$3" | grep -qF -- "$2"; then bad "$1 (unexpecte
 expect_rc()    { if [ "$3" = "$2" ]; then ok; else bad "$1 (rc=$3 want $2)"; fi; }
 expect_rcnz()  { if [ "${2:-0}" != "0" ]; then ok; else bad "$1 (expected non-zero rc)"; fi; }
 
+# Base for every per-test temp dir. TMPDIR is re-pointed per test, so it must not
+# be used as the parent again: nesting made paths grow until mkdir failed.
+BASE_TMP="${TMPDIR:-/tmp}"
+
 newenv() {
-    T=$(mktemp -d "${TMPDIR:-/tmp}/nvptest.XXXXXX")
+    T=$(TMPDIR="$BASE_TMP" mktemp -d "$BASE_TMP/nvptest.XXXXXX")
     export FAKE_STATE_DIR="$T/state"
     export NVPTOOL_BACKUP_DIR="$T/backups"
     export TMPDIR="$T/tmp"
@@ -28,7 +32,10 @@ newenv() {
     printf 'trusted-mock-apk\n' > "$NVPTOOL_APK"
     printf 'apk_sha256=%s\n' "$(shasum -a 256 "$NVPTOOL_APK" | cut -d' ' -f1)" > "$T/SOURCE-COMMIT.txt"
     export PATH="$FAKEBIN:$PATH"
-    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK FAKE_DUP_LATE FAKE_PID FAKE_PID2 FAKE_NO_CLAIM FAKE_DUP_SKIPPED FAKE_DUP_ABORT 2>/dev/null || true
+    # Bind the mock explicitly: the tool refuses a relative path, so it can never
+    # silently fall back to a real adb found on PATH.
+    export NVPTOOL_ADB="$FAKEBIN/adb"
+    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK FAKE_DUP_LATE FAKE_PID FAKE_PID2 FAKE_NO_CLAIM FAKE_DUP_SKIPPED FAKE_DUP_ABORT FAKE_APPLY_NOOP FAKE_RESTORE_NOOP FAKE_BEGIN_ONLY FAKE_APPLY_WRITTEN FAKE_DUP_BEGIN_ONLY FAKE_OP_LIE 2>/dev/null || true
     # The write paths are on a safety hold, so the suites exercise their logic
     # behind the documented bypass. The hold itself is tested on its own.
     export NVPTOOL_ALLOW_UNVALIDATED_WRITE=1
@@ -39,6 +46,13 @@ nv() {   # nv <args...> ; sets OUT and RC
     OUT=$( cd "$ROOT" && ./tools/nvptool.sh "$@" 2>&1 )
     RC=$?
 }
+
+echo "== the mock adb is bound explicitly and cannot fall back =="
+newenv; nv status
+expect_rc "mock-bound status rc" 0 "$RC"
+OUT2=$(NVPTOOL_ADB=tests/host/fakebin/adb ./tools/nvptool.sh status 2>&1); RC2=$?
+expect_rc "relative NVPTOOL_ADB refused" 1 "$RC2"
+expect_has "refusal names the requirement" "absolute path" "$OUT2"
 
 echo "== status is genuinely non-mutating =="
 newenv; nv status
@@ -343,28 +357,59 @@ expect_has "duplicate count surfaced" "duplicate device execution" "$OUT"
 expect_has "reboot required stated" "REBOOT REQUIRED" "$OUT"
 : > "$FAKE_STATE_DIR/calls.log"
 
-echo "== a run without the claim record is rejected =="
-newenv; export FAKE_NO_CLAIM=1; nv read
-expect_rc "missing claim rc" 3 "$RC"
-expect_has "missing guard named" "no_guard" "$OUT"
-expect_hasnt "missing claim no success" "read OK" "$OUT"
-
-echo "== a claimed-out duplicate is reported, not fatal =="
-newenv; export FAKE_DUP_SKIPPED=1; nv read
-expect_rc "claimed duplicate rc" 0 "$RC"
-expect_has "duplicate is counted" "claimed out" "$OUT"
-
 echo "== a duplicate execution that aborted because the first already wrote is benign =="
 newenv; export FAKE_DUP_ABORT=1; nv apply
 expect_rc "apply with aborting duplicate rc" 0 "$RC"
 expect_has "apply still reports verified" "apply OK" "$OUT"
 expect_has "apply states the reboot step" "REBOOT REQUIRED" "$OUT"
 
-echo "== a duplicated restore-reference is accepted when benign =="
+echo "== write classes need no claim note: production emits none =="
+newenv; unset FAKE_NO_CLAIM; nv apply
+expect_rc "apply without claim notes rc" 0 "$RC"
+expect_has "apply reports verified" "apply OK" "$OUT"
+expect_has "apply states the reboot step" "REBOOT REQUIRED" "$OUT"
+
+echo "== reconciliation: an execution without a terminal summary is rejected =="
+newenv; export FAKE_DUP_LATE=1 FAKE_DUP_BEGIN_ONLY=1; nv read
+expect_rcnz "begin without summary rejected" "$RC"
+expect_has "incomplete execution named" "incomplete_execution" "$OUT"
+expect_hasnt "no success claim for partial execution" "read OK" "$OUT"
+
+echo "== reconciliation: duplicate summaries are rejected =="
+newenv; export FAKE_RESPONSE=dup; nv read
+expect_rcnz "duplicate summary rejected" "$RC"
+expect_has "duplicate summary named" "duplicate_summary" "$OUT"
+
+echo "== reconciliation: a record for another operation is rejected =="
+newenv; export FAKE_OP_LIE=1; nv read
+expect_rcnz "operation mismatch rejected" "$RC"
+expect_has "operation mismatch named" "op_mismatch" "$OUT"
+
+echo "== reconciliation: impossible counters are rejected =="
+newenv; export FAKE_APPLY_WRITTEN=9; nv apply
+expect_rcnz "written beyond verified rejected" "$RC"
+expect_has "inconsistent counters named" "bad_counters" "$OUT"
+
+echo "== apply accepts the digest abort and reports the real write count =="
+newenv; export FAKE_DUP_ABORT=1; nv apply
+expect_rc "apply with digest abort rc" 0 "$RC"
+expect_has "apply reports eight writes" "(wrote 8)" "$OUT"
+expect_has "apply states the reboot step" "REBOOT REQUIRED" "$OUT"
+
+echo "== a genuine no-op reports zero writes =="
+newenv; export FAKE_APPLY_NOOP=1; nv apply
+expect_rc "no-op apply rc" 0 "$RC"
+expect_has "no-op reports zero writes" "(wrote 0)" "$OUT"
+
+echo "== an abort is not acceptable outside apply =="
 newenv; export FAKE_DUP_ABORT=1; nv restore-reference
-expect_rc "restore-reference with duplicate rc" 0 "$RC"
-expect_has "restore-reference still reports verified" "reference profile restored" "$OUT"
-expect_has "restore-reference states the reboot step" "REBOOT REQUIRED" "$OUT"
+expect_rcnz "abort on restore-reference rejected" "$RC"
+expect_hasnt "no reference success claim" "reference profile restored" "$OUT"
+
+echo "== two identical reference executions are accepted =="
+newenv; export FAKE_DUP_LATE=1; nv restore-reference
+expect_rc "duplicated reference restore rc" 0 "$RC"
+expect_has "reference restore reported" "reference profile restored" "$OUT"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

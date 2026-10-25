@@ -391,180 +391,175 @@ NL_REASON=""
 NL_FIELDS=0
 NL_DUPLICATES=0
 
+# Reconcile the records of ONE request. Every execution (pid) must have exactly
+# one begin, one terminal summary and a valid order; metadata is validated per
+# operation, and nothing is assumed: verified/total/written come from the records.
+#   OK <written> <verified> <total> <executions> <duplicates>
+#   STATUS <status> <written> <verified> <total> <reason> <executions>
+#   ERR <code>
+nl_reconcile() {   # $1 op, $2 run id, $3 result file
+    awk -v want_run="$2" -v want_op="$1" '
+function tok(line, key,   n, i, t, v) {
+    n = split(line, t, " ")
+    for (i = 1; i <= n; i++) {
+        if (index(t[i], key "=") == 1) {
+            v = t[i]
+            sub(key "=", "", v)
+            return v
+        }
+    }
+    return ""
+}
+function has(line, word) { return index(line, " " word) > 0 }
+function isnum(x) { return x ~ /^[0-9]+$/ }
+function fail(code) { if (err == "") err = code }
+{
+    if ($0 !~ /^NVPTOOL_RESULT /) next
+    r = tok($0, "run"); o = tok($0, "op"); p = tok($0, "pid")
+    if (r != want_run) { fail("run_mismatch"); next }
+    if (o != want_op)  { fail("op_mismatch");  next }
+    if (p == "")       { fail("missing_pid");  next }
+    if (!(p in pids)) { pids[p] = 1; order[++n] = p }
+    if (has($0, "ev=begin")) {
+        b[p]++
+        if (!(p in bl)) bl[p] = NR
+        next
+    }
+    if (has($0, "ev=field")) {
+        idx = tok($0, "idx"); val = tok($0, "val")
+        if (idx == "") { fail("field_without_idx"); next }
+        fc[p]++
+        fidx[p, idx]++
+        fv[p, idx] = val
+        next
+    }
+    if (has($0, "ev=summary")) {
+        s[p]++
+        if (!(p in sl)) sl[p] = NR
+        st[p] = tok($0, "status"); ph[p] = tok($0, "phase")
+        wr[p] = tok($0, "written"); vf[p] = tok($0, "verified")
+        tt[p] = tok($0, "total");   rs[p] = tok($0, "reason")
+        next
+    }
+    if (has($0, "ev=note")) next
+    fail("unknown_record")
+}
+END {
+    if (err != "") { print "ERR " err; exit }
+    if (n == 0) { print "ERR no_execution"; exit }
+
+    for (k = 1; k <= n; k++) {
+        p = order[k]
+        if (b[p] == 0) { print "ERR summary_without_begin"; exit }
+        if (b[p] > 1)  { print "ERR duplicate_begin"; exit }
+        if (s[p] == 0) { print "ERR incomplete_execution"; exit }
+        if (s[p] > 1)  { print "ERR duplicate_summary"; exit }
+        if (sl[p] < bl[p]) { print "ERR summary_before_begin"; exit }
+    }
+
+    nok = 0; nab = 0; nbad = 0; wl = ""; ver = ""; tot = ""; badst = ""; badrs = ""
+    for (k = 1; k <= n; k++) {
+        p = order[k]
+        if (!isnum(wr[p]) || !isnum(vf[p]) || !isnum(tt[p])) { print "ERR bad_counters"; exit }
+        if (tt[p] + 0 != 8) { print "ERR bad_total"; exit }
+        if (st[p] != "OK" && st[p] != "ABORT" && st[p] != "FATAL" && st[p] != "REFUSED" && st[p] != "INCOMPLETE") {
+            print "ERR unknown_status"; exit
+        }
+        if (st[p] == "OK") {
+            if (vf[p] + 0 > tt[p] + 0 || wr[p] + 0 > vf[p] + 0) { print "ERR bad_counters"; exit }
+            if (want_op == "read") {
+                if (wr[p] + 0 != 0)  { print "ERR read_wrote"; exit }
+                if (vf[p] + 0 != 8)  { print "ERR bad_verified"; exit }
+                if (ph[p] != "read") { print "ERR bad_phase"; exit }
+                if (fc[p] != 8)      { print "ERR field_count"; exit }
+                for (i = 0; i < 8; i++) if (fidx[p, i] != 1) { print "ERR field_index_" i; exit }
+            } else if (want_op == "apply") {
+                if (vf[p] + 0 != 8) { print "ERR bad_verified"; exit }
+                if (ph[p] != "write" && ph[p] != "done") { print "ERR bad_phase"; exit }
+                if (ph[p] == "done" && wr[p] + 0 != 0) { print "ERR bad_counters"; exit }
+            } else if (want_op == "restore") {
+                if (vf[p] + 0 != 1) { print "ERR bad_verified"; exit }
+                if (wr[p] + 0 > 1)  { print "ERR bad_counters"; exit }
+                if (ph[p] != "write" && ph[p] != "done") { print "ERR bad_phase"; exit }
+                if (ph[p] == "done" && wr[p] + 0 != 0) { print "ERR bad_counters"; exit }
+                if (fc[p] != 1)     { print "ERR field_count"; exit }
+            } else if (want_op == "restore_reference") {
+                if (vf[p] + 0 != 8) { print "ERR bad_verified"; exit }
+                if (ph[p] != "write" && ph[p] != "done") { print "ERR bad_phase"; exit }
+            } else {
+                print "ERR unknown_op"; exit
+            }
+            if (nok > 0 && (vf[p] != ver || tt[p] != tot)) { print "ERR bad_counters"; exit }
+            ver = vf[p]; tot = tt[p]
+            wl = (wl == "" ? wr[p] : wl "," wr[p])
+            nok++
+        } else if (st[p] == "ABORT") {
+            if (want_op != "apply") { print "ERR abort_not_allowed"; exit }
+            if (rs[p] != "state_changed_since_backup" || ph[p] != "read" ||
+                wr[p] + 0 != 0 || vf[p] + 0 != 0) { print "ERR bad_abort"; exit }
+            nab++
+        } else {
+            nbad++
+            if (badst == "") { badst = st[p]; badrs = rs[p]; badwr = wr[p]; badvf = vf[p]; badtt = tt[p] }
+            else if (badst != st[p]) { print "ERR contradictory_status"; exit }
+        }
+    }
+
+    if (nbad > 0 && nok > 0) { print "ERR contradictory_status"; exit }
+    if (nbad > 0) { print "STATUS " badst " " badwr " " badvf " " badtt " " (badrs == "" ? "-" : badrs) " " n; exit }
+    if (nok == 0 && nab > 0) { print "STATUS ABORT 0 0 8 state_changed_since_backup " n; exit }
+    if (nok == 0) { print "ERR no_successful_execution"; exit }
+
+    if (want_op == "read") {
+        for (i = 0; i < 8; i++) {
+            ref = ""; first = 1
+            for (k = 1; k <= n; k++) {
+                p = order[k]
+                if (st[p] != "OK") continue
+                if (first) { ref = fv[p, i]; first = 0 }
+                else if (fv[p, i] != ref) { print "ERR value_mismatch_" i; exit }
+            }
+        }
+    }
+    print "OK " wl " " ver " " tot " " n " " (n - 1)
+}
+' "$3"
+}
+
 nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
-    local op="$1" run="$2" f="$NL_RUN_DIR/result.txt"
+    local op="$1" run="$2" f="$NL_RUN_DIR/result.txt" out kind
     NL_PARSE_ERR=""; NL_STATUS=""; NL_WRITTEN=""; NL_VERIFIED=""; NL_TOTAL=""
-    NL_REASON=""; NL_FIELDS=0
+    NL_REASON=""; NL_FIELDS=0; NL_DUPLICATES=0
 
     [ -s "$f" ] || { NL_PARSE_ERR="no_output"; return 3; }
 
-    local begins summaries bline sline line
-    begins=$(grep -c "ev=begin" "$f" || true)
-    summaries=$(grep -c "ev=summary" "$f" || true)
-    # One request executes more than once per boot on this firmware and that
-    # cannot be prevented (docs/ZYGOTE-SINGLE-EXECUTION.md).
-    if [ "${begins:-0}" -gt 1 ]; then
-        if [ "$op" = "read" ]; then
-            nl_parse_read_multi      # additionally proves nothing wrote, values agree
-        else
-            nl_parse_multi_write     # write paths verify their own read-back
-        fi
-        return $?
-    fi
-
-    [ "$begins" = "1" ] || { NL_PARSE_ERR="bad_begin_count"; return 3; }
-    [ "$summaries" = "1" ] || { NL_PARSE_ERR="bad_summary_count"; return 3; }
-
-    bline=$(grep -n "ev=begin" "$f" | head -1 | cut -d: -f1)
-    sline=$(grep -n "ev=summary" "$f" | head -1 | cut -d: -f1)
-    [ "$sline" -gt "$bline" ] || { NL_PARSE_ERR="summary_before_begin"; return 3; }
-
-    line=$(sed -n "${sline}p" "$f")
-    case "$line" in *"run=$run "*|*"run=$run") ;; *) NL_PARSE_ERR="run_mismatch"; return 3 ;; esac
-    case "$line" in *"op=$op"*) ;; *) NL_PARSE_ERR="op_mismatch"; return 3 ;; esac
-
-    # Reply association: the summary must belong to the same execution as the
-    # begin. Two executions produce two begins (rejected above); a summary that
-    # does not match its begin means records from different processes were
-    # mixed into one snapshot.
-    local beginline bpid spid
-    beginline=$(sed -n "${bline}p" "$f")
-    bpid=$(printf '%s' "$beginline" | tr ' ' '\n' | sed -n 's/^pid=//p' | head -1)
-    spid=$(printf '%s' "$line" | tr ' ' '\n' | sed -n 's/^pid=//p' | head -1)
-    [ -n "$bpid" ] || { NL_PARSE_ERR="begin_without_pid"; return 3; }
-    [ -n "$spid" ] || { NL_PARSE_ERR="summary_without_pid"; return 3; }
-    [ "$bpid" = "$spid" ] || { NL_PARSE_ERR="pid_mismatch"; return 3; }
-
-    NL_STATUS=$(printf '%s' "$line" | tr ' ' '\n' | sed -n 's/^status=//p' | head -1)
-    NL_WRITTEN=$(printf '%s' "$line" | tr ' ' '\n' | sed -n 's/^written=//p' | head -1)
-    NL_VERIFIED=$(printf '%s' "$line" | tr ' ' '\n' | sed -n 's/^verified=//p' | head -1)
-    NL_TOTAL=$(printf '%s' "$line" | tr ' ' '\n' | sed -n 's/^total=//p' | head -1)
-    NL_REASON=$(printf '%s' "$line" | tr ' ' '\n' | sed -n 's/^reason=//p' | head -1)
-    NL_FIELDS=$(grep -c "ev=field" "$f" || true)
-
-    case "$NL_STATUS" in
-        OK|ABORT|REFUSED|INCOMPLETE|FATAL) ;;
-        *) NL_PARSE_ERR="bad_status"; return 3 ;;
-    esac
-
-    # A successful run must record a single-execution guard. A REFUSED run is
-    # allowed through so the payload can report why it declined (for example
-    # no_single_execution_guard); it is never treated as success.
-    if [ "$NL_STATUS" = "OK" ] && ! grep -qE 'msg=(claim_acquired|disarm_ok)' "$f"; then
-        NL_PARSE_ERR="no_guard"; return 3
-    fi
-    NL_DUPLICATES=$(grep -c 'msg=duplicate_skipped' "$f" || true)
-    [ "$NL_DUPLICATES" = "0" ] || \
-        printf 'note: %s duplicate execution(s) were claimed out and did no work
-' \
-            "$NL_DUPLICATES" >&2
-
-    if [ "$op" = "read" ]; then
-        [ "$NL_FIELDS" = "8" ] || { NL_PARSE_ERR="field_count_$NL_FIELDS"; return 3; }
-        local i
-        for i in 0 1 2 3 4 5 6 7; do
-            grep -q "ev=field idx=$i " "$f" || { NL_PARSE_ERR="missing_field_$i"; return 3; }
-        done
-    fi
-    return 0
-}
-
-
-# A single armed request executes more than once on this firmware and there is no
-# way to prevent it (docs/ZYGOTE-SINGLE-EXECUTION.md). For a READ that is
-# acceptable *only* when every execution is read-only and every execution saw
-# byte-identical values: the result is then the same as one execution would have
-# produced. Anything else is refused. Writes never take this path.
-# A write path may legitimately execute twice. For apply, the second execution is
-# digest-bound and therefore *aborts* with state_changed_since_backup once the
-# first one has written - that abort is the signature of exactly one successful
-# write, not a failure. Accepted outcomes, per execution:
-#   * status=OK                                    (wrote, or found nothing to do)
-#   * status=ABORT reason=state_changed_since_backup  (another execution already wrote)
-# Anything else - FATAL, INCOMPLETE, REFUSED, unknown reason - fails the command.
-nl_parse_multi_write() {
-    local f="$NL_RUN_DIR/result.txt" nsum nok nbenign bad
-    nsum=$(grep -c 'ev=summary' "$f" || true)
-    [ "${nsum:-0}" -gt 0 ] || { NL_PARSE_ERR="no_summary"; return 3; }
-    nok=$(grep 'ev=summary' "$f" | grep -c 'status=OK' || true)
-    nbenign=$(grep 'ev=summary' "$f" | grep -c 'status=ABORT .*reason=state_changed_since_backup' || true)
-    bad=$((nsum - nok - nbenign))
-    [ "$bad" -eq 0 ] || { NL_PARSE_ERR="not_all_ok"; return 3; }
-    [ "${nok:-0}" -gt 0 ] || { NL_PARSE_ERR="no_successful_execution"; return 3; }
-    NL_STATUS=OK
-    NL_WRITTEN=$(grep 'ev=summary' "$f" | grep 'status=OK' | sed -n 's/.*written=\([0-9][0-9]*\).*/\1/p' | sort -u | tr '\n' ',' | sed 's/,$//')
-    NL_VERIFIED=8; NL_TOTAL=8
-    NL_DUPLICATES=$((nsum - 1))
-    NL_FIELDS=$(grep -c 'ev=field' "$f" || true)
-    NL_REASON="$nsum executions, one wrote, rest benign"
-    return 0
-}
-
-# Read-only variant: proves every execution wrote nothing and that all executions
-# returned byte-identical values for all eight fields.
-nl_parse_read_multi() {
-    local f="$NL_RUN_DIR/result.txt" out
-    out=$(awk -v want="$NL_RUN_ID" '
-        function tk(line, key,   n, i, tok, v) {
-            n = split(line, tok, " ")
-            for (i = 1; i <= n; i++) {
-                if (index(tok[i], key "=") == 1) {
-                    v = tok[i]
-                    sub(key "=", "", v)
-                    return v
-                }
-            }
-            return ""
-        }
-        {
-            if (index($0, "run=" want) == 0) next
-            pid = tk($0, "pid")
-            if (index($0, "ev=begin"))   { b[pid]++; nexec++; next }
-            if (index($0, "ev=summary")) {
-                s[pid]++
-                if (tk($0, "status") != "OK")  err = "not_ok"
-                if (tk($0, "written") != "0")  err = "not_read_only"
-                if (tk($0, "op") != "read")    err = "not_a_read"
-                next
-            }
-            if (index($0, "ev=field")) {
-                idx = tk($0, "idx")
-                val[pid, idx] = tk($0, "val")
-                fc[pid]++
-            }
-        }
-        END {
-            if (err != "")   { print err; exit }
-            if (nexec < 1)    { print "no_execution"; exit }
-            for (p in b) {
-                if (b[p] != 1) { print "bad_begin_count"; exit }
-                if (s[p] != 1) { print "bad_summary_count"; exit }
-                if (fc[p] != 8) { print "field_count"; exit }
-            }
-            for (p in s) { if (!(p in b)) { print "summary_without_begin"; exit } }
-            for (i = 0; i < 8; i++) {
-                ref = ""; first = 1
-                for (p in b) {
-                    if (first) { ref = val[p, i]; first = 0 }
-                    else if (val[p, i] != ref) { print "value_mismatch_" i; exit }
-                }
-            }
-            print "OK 0 8 8 " (nexec - 1)
-        }
-    ' "$f")
-
-    case "$out" in
-        "OK "*)
+    out=$(nl_reconcile "$op" "$run" "$f")
+    kind=${out%% *}
+    case "$kind" in
+        OK)
             set -- $out
             NL_STATUS=OK; NL_WRITTEN=$2; NL_VERIFIED=$3; NL_TOTAL=$4
-            NL_DUPLICATES=$5; NL_FIELDS=8; NL_REASON="$5 duplicates, identical"
+            NL_DUPLICATES=$6
+            NL_FIELDS=$(grep -c 'ev=field' "$f" || true)
+            if [ "$NL_DUPLICATES" != "0" ]; then
+                printf 'note: %s duplicate execution(s); every execution was reconciled
+' \
+                    "$NL_DUPLICATES" >&2
+            fi
             return 0 ;;
-        "")
-            NL_PARSE_ERR="no_output"; return 3 ;;
+        STATUS)
+            set -- $out
+            NL_STATUS=$2; NL_WRITTEN=$3; NL_VERIFIED=$4; NL_TOTAL=$5
+            NL_REASON=$6; NL_DUPLICATES=$(($7 - 1))
+            return 0 ;;
+        ERR)
+            NL_PARSE_ERR=${out#ERR }
+            return 3 ;;
         *)
-            NL_PARSE_ERR="$out"; return 3 ;;
+            NL_PARSE_ERR="reconcile_output"; return 3 ;;
     esac
 }
+
 
 nl_success() { [ "${NL_STATUS:-}" = "OK" ]; }
 

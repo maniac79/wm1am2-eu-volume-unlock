@@ -385,127 +385,152 @@ function Assert-Result {
     $lines = @(Get-Content -LiteralPath $File -Encoding UTF8 | Where-Object { "$_".Trim().Length -gt 0 })
     if ($lines.Count -eq 0) { Fail 'no completion record: outcome UNKNOWN (not "unchanged")' 4 }
 
-    $begins = @($lines | Where-Object { $_ -match 'ev=begin' })
-    $sums   = @($lines | Where-Object { $_ -match 'ev=summary' })
-
-    # A single armed request executes more than once on this firmware and that
-    # cannot be prevented (docs/ZYGOTE-SINGLE-EXECUTION.md). For a READ it is
-    # acceptable only when every execution was read-only and all executions
-    # returned byte-identical values. Writes never take this path.
-    if ($begins.Count -gt 1) {
-        $byPid = @{}
-        $okCount = 0
-        foreach ($l in $lines) {
-            $p = Get-Token $l 'pid'
-            if (-not $p) { Fail 'malformed duplicate execution records (no pid)' 4 }
-            if (-not $byPid.ContainsKey($p)) {
-                $byPid[$p] = [pscustomobject]@{ Begin = 0; Sum = 0; Fields = @{} }
+    # Reconcile by execution: every pid must have exactly one begin, one terminal
+    # summary and a valid order. Counters come from the records and are validated
+    # per operation; nothing is assumed.
+    $execs = [ordered]@{}
+    $order = New-Object System.Collections.Generic.List[string]
+    for ($li = 0; $li -lt $lines.Count; $li++) {
+        $line = $lines[$li]
+        if ($line -notmatch '^NVPTOOL_RESULT ') { Fail 'unknown record in result: outcome UNKNOWN' 4 }
+        $t = @{}
+        foreach ($tok in ($line -split ' ')) {
+            if ($tok -match '^([a-z_]+)=(.*)$') { $t[$Matches[1]] = $Matches[2] }
+        }
+        if ($t['run'] -ne $RunId) { Fail 'stale result (run id mismatch): outcome UNKNOWN' 4 }
+        if ($t['op'] -ne $Op) { Fail 'stale result (operation mismatch): outcome UNKNOWN' 4 }
+        $p = $t['pid']
+        if (-not $p) { Fail 'malformed result (record without pid): outcome UNKNOWN' 4 }
+        if (-not $execs.Contains($p)) {
+            $execs[$p] = [pscustomobject]@{ Begin = $null; Sum = $null; BeginLn = -1; SumLn = -1
+                                           Fields = @{}; DuplicateIndex = $false }
+            [void]$order.Add($p)
+        }
+        $e = $execs[$p]
+        switch ($t['ev']) {
+            'begin' {
+                if ($null -ne $e.Begin) { Fail "duplicate begin record (pid $p): outcome UNKNOWN" 4 }
+                $e.Begin = $t; $e.BeginLn = $li
             }
-            if ($l -match 'ev=begin') { $byPid[$p].Begin++ }
-            elseif ($l -match 'ev=summary') {
-                $byPid[$p].Sum++
-                $st = Get-Token $l 'status'
-                $rs = Get-Token $l 'reason'
-                # apply is digest-bound: after one execution has written, the other
-                # aborts with state_changed_since_backup. That abort is the
-                # signature of exactly one successful write, not a failure.
-                $benign = ($st -eq 'OK') -or
-                          ($Op -ne 'read' -and $st -eq 'ABORT' -and $rs -eq 'state_changed_since_backup')
-                if (-not $benign) { Fail "duplicate execution reported $st ($rs)" 4 }
-                if ($st -eq 'OK') { $okCount++ }
-                if ($Op -eq 'read' -and (Get-Token $l 'written') -ne '0') {
-                    Fail 'duplicate read wrote: refusing' 4
+            'summary' {
+                if ($null -ne $e.Sum) { Fail "duplicate summary record (pid $p): outcome UNKNOWN" 4 }
+                $e.Sum = $t; $e.SumLn = $li
+            }
+            'field' {
+                $idx = $t['idx']
+                if (-not $idx) { Fail 'malformed result (field without index): outcome UNKNOWN' 4 }
+                if ($e.Fields.ContainsKey($idx)) { $e.DuplicateIndex = $true }
+                else { $e.Fields[$idx] = $t['val'] }
+            }
+            'note' { }
+            default { Fail 'unknown record type in result: outcome UNKNOWN' 4 }
+        }
+    }
+
+    if ($order.Count -eq 0) { Fail 'no execution record: outcome UNKNOWN' 4 }
+
+    $ok = 0; $aborts = 0; $bad = 0; $writes = @()
+    $verified = $null; $total = $null; $firstOkPid = $null
+    $badStatus = ''; $badReason = ''; $badWritten = ''; $badVerified = ''; $badTotal = ''
+
+    foreach ($p in $order) {
+        $e = $execs[$p]
+        if ($null -eq $e.Begin) { Fail "summary without begin (pid $p): outcome UNKNOWN" 4 }
+        if ($null -eq $e.Sum) { Fail "incomplete execution (pid $p has no terminal summary): outcome UNKNOWN" 4 }
+        if ($e.SumLn -lt $e.BeginLn) { Fail "summary before begin (pid $p): outcome UNKNOWN" 4 }
+
+        $st = $e.Sum['status']; $ph = $e.Sum['phase']
+        $wr = $e.Sum['written']; $vf = $e.Sum['verified']; $tt = $e.Sum['total']; $rs = $e.Sum['reason']
+
+        foreach ($n in @($wr, $vf, $tt)) {
+            if ($n -notmatch '^[0-9]+$') { Fail "malformed counters (pid $p): outcome UNKNOWN" 4 }
+        }
+        $w = [int]$wr; $v = [int]$vf; $tot = [int]$tt
+        if ($tot -ne 8) { Fail "unexpected total $tot (pid $p): outcome UNKNOWN" 4 }
+
+        if (@('OK', 'ABORT', 'FATAL', 'REFUSED', 'INCOMPLETE') -notcontains $st) {
+            Fail "malformed status '$st': outcome UNKNOWN" 4
+        }
+        if ($st -eq 'OK') {
+            if ($v -gt $tot -or $w -gt $v) { Fail "inconsistent counters (pid $p): outcome UNKNOWN" 4 }
+            if ($Op -eq 'read') {
+                if ($w -ne 0) { Fail 'a read reported writes: refusing' 4 }
+                if ($v -ne 8) { Fail "read verified $v of 8: outcome UNKNOWN" 4 }
+                if ($ph -ne 'read') { Fail "unexpected read phase '$ph'" 4 }
+                if ($e.DuplicateIndex) { Fail 'duplicate field index in result' 4 }
+                if ($e.Fields.Count -ne 8) { Fail "incomplete read (fields=$($e.Fields.Count)): outcome UNKNOWN" 4 }
+                for ($i = 0; $i -lt 8; $i++) {
+                    if (-not $e.Fields.ContainsKey("$i")) { Fail "incomplete read (missing field $i)" 4 }
                 }
-            } elseif ($l -match 'ev=field') {
-                $byPid[$p].Fields[(Get-Token $l 'idx')] = (Get-Token $l 'val')
+            } elseif ($Op -eq 'apply') {
+                if ($v -ne 8) { Fail "apply verified $v of 8: outcome UNKNOWN" 4 }
+                if (@('write', 'done') -notcontains $ph) { Fail "unexpected apply phase '$ph'" 4 }
+                if ($ph -eq 'done' -and $w -ne 0) { Fail 'apply reported done with writes: outcome UNKNOWN' 4 }
+            } elseif ($Op -eq 'restore') {
+                # RestoreField handles exactly one field.
+                if ($v -ne 1) { Fail "field restore verified $v of 1: outcome UNKNOWN" 4 }
+                if ($w -gt 1) { Fail 'field restore reported more than one write' 4 }
+                if (@('write', 'done') -notcontains $ph) { Fail "unexpected restore phase '$ph'" 4 }
+                if ($ph -eq 'done' -and $w -ne 0) { Fail 'field restore reported done with a write' 4 }
+                if ($e.Fields.Count -ne 1) { Fail "field restore reported $($e.Fields.Count) fields" 4 }
+            } elseif ($Op -eq 'restore_reference') {
+                if ($v -ne 8) { Fail "reference restore verified $v of 8: outcome UNKNOWN" 4 }
+                if (@('write', 'done') -notcontains $ph) { Fail "unexpected reference phase '$ph'" 4 }
+            } else {
+                Fail "unknown operation '$Op'" 4
+            }
+            if ($null -ne $verified -and ($vf -ne $verified -or $tt -ne $total)) {
+                Fail 'executions disagree on verification counters' 4
+            }
+            $verified = $vf; $total = $tt
+            $writes += $w
+            if ($null -eq $firstOkPid) { $firstOkPid = $p }
+            $ok++
+        } elseif ($st -eq 'ABORT') {
+            # Only apply is digest-bound; its abort is the signature of an exclusive
+            # writer, and only with pre-write metadata.
+            if ($Op -ne 'apply') { Fail 'abort is not acceptable for this operation' 4 }
+            if ($rs -ne 'state_changed_since_backup' -or $ph -ne 'read' -or $w -ne 0 -or $v -ne 0) {
+                Fail 'unexpected abort metadata: outcome UNKNOWN' 4
+            }
+            $aborts++
+        } else {
+            $bad++
+            if (-not $badStatus) {
+                $badStatus = $st; $badReason = $rs; $badWritten = $wr; $badVerified = $vf; $badTotal = $tt
+            } elseif ($badStatus -ne $st) {
+                Fail 'executions disagree on status: outcome UNKNOWN' 4
             }
         }
-        if ([int]$okCount -lt 1) { Fail 'no successful execution among the duplicates' 4 }
-        foreach ($p in $byPid.Keys) {
-            if ($byPid[$p].Begin -ne 1 -or $byPid[$p].Sum -ne 1) {
-                Fail 'malformed duplicate execution records' 4
-            }
-            if ($Op -eq 'read' -and $byPid[$p].Fields.Count -ne 8) {
-                Fail 'malformed duplicate execution records' 4
-            }
-        }
-        if ($Op -eq 'read') { for ($i = 0; $i -lt 8; $i++) {
-            $vals = @($byPid.Keys | ForEach-Object { $byPid[$_].Fields["$i"] } | Sort-Object -Unique)
-            if ($vals.Count -ne 1) { Fail "duplicate executions disagree on field $i" 4 }
-        } }
-        $dup = $byPid.Count - 1
-        # Values are proven identical, so any execution's field records describe
-        # the same state; return exactly one set so the backup is built once.
-        $keepPid = @($byPid.Keys | Select-Object -First 1)
-        $keepFields = @($lines | Where-Object {
-            $_ -match 'ev=field' -and (Get-Token $_ 'pid') -eq $keepPid
-        })
+    }
+
+    if ($bad -gt 0 -and $ok -gt 0) { Fail 'a failed execution accompanied a success: outcome UNKNOWN' 4 }
+    if ($bad -gt 0) {
         return [pscustomobject]@{
-            Status = 'OK'; Written = '0'; Verified = '8'; Total = '8'
-            Reason = "$dup duplicates, identical"; Fields = $keepFields; Duplicates = $dup
+            Status = $badStatus; Written = $badWritten; Verified = $badVerified
+            Total = $badTotal; Reason = $badReason; Fields = @(); Duplicates = $bad - 1
+        }
+    }
+    if ($ok -eq 0) {
+        return [pscustomobject]@{
+            Status = 'ABORT'; Written = '0'; Verified = '0'; Total = '8'
+            Reason = 'state_changed_since_backup'; Fields = @(); Duplicates = $aborts - 1
         }
     }
 
-    if ($begins.Count -ne 1) { Fail "malformed result (begin x$($begins.Count)): outcome UNKNOWN" 4 }
-    if ($sums.Count -ne 1)   { Fail "malformed result (summary x$($sums.Count)): outcome UNKNOWN" 4 }
-
-    $bi = [array]::IndexOf($lines, $begins[0])
-    $si = [array]::IndexOf($lines, $sums[0])
-    if ($si -le $bi) { Fail 'malformed result (summary before begin): outcome UNKNOWN' 4 }
-
-    $s = $sums[0]
-    if ($s.IndexOf("run=$RunId ", [StringComparison]::Ordinal) -lt 0) {
-        Fail 'stale result (run id mismatch): outcome UNKNOWN' 4
-    }
-    if ($s.IndexOf("op=$Op", [StringComparison]::Ordinal) -lt 0) {
-        Fail 'stale result (operation mismatch): outcome UNKNOWN' 4
-    }
-
-    # Reply association: the summary must come from the same execution as the
-    # begin. Two executions produce two begins (rejected above); a mismatch here
-    # means records from different processes were mixed into one snapshot.
-    $bpid = Get-Token $begins[0] 'pid'
-    $spid = Get-Token $s 'pid'
-    if (-not $bpid) { Fail 'malformed result (begin without pid): outcome UNKNOWN' 4 }
-    if (-not $spid) { Fail 'malformed result (summary without pid): outcome UNKNOWN' 4 }
-    if ($bpid -ne $spid) {
-        Fail "result records from two processes (pid $bpid vs $spid): outcome UNKNOWN" 4
-    }
-
-    $status = Get-Token $s 'status'
-    if (@('OK', 'ABORT', 'REFUSED', 'INCOMPLETE', 'FATAL') -notcontains $status) {
-        Fail "malformed result (status '$status'): outcome UNKNOWN" 4
-    }
-
-    # At least one single-execution guard must be recorded: an exclusive claim or
-    # a verified disarm of the exemption. Without either, a second fork could
-    # have executed as well.
-    # A successful run must record a single-execution guard. A REFUSED run is let
-    # through so the payload can report why it declined; it is never success.
-    if ($status -eq 'OK' -and
-        -not ($lines | Where-Object { $_ -match 'msg=(claim_acquired|disarm_ok)' })) {
-        Fail 'no single-execution guard recorded' 4
-    }
-    $dup = @($lines | Where-Object { $_ -match 'msg=duplicate_skipped' }).Count
-    if ($dup -gt 0) { Write-Host "note: $dup duplicate execution(s) were claimed out and did no work" }
-
-    $fields = @($lines | Where-Object { $_ -match 'ev=field' })
+    $keepFields = @()
     if ($Op -eq 'read') {
-        if ($fields.Count -ne 8) { Fail "incomplete read (fields=$($fields.Count)): outcome UNKNOWN" 4 }
         for ($i = 0; $i -lt 8; $i++) {
-            if (-not ($fields | Where-Object { (Get-Token $_ 'idx') -eq "$i" })) {
-                Fail "incomplete read (missing field $i): outcome UNKNOWN" 4
-            }
+            $vals = @($order | ForEach-Object { $execs[$_].Fields["$i"] } | Sort-Object -Unique)
+            if ($vals.Count -ne 1) { Fail "duplicate executions disagree on field $i" 4 }
         }
+        $keepFields = @($lines | Where-Object { $_ -match ' ev=field ' -and (Get-Token $_ 'pid') -eq $firstOkPid })
     }
 
+    $written = if ((@($writes | Sort-Object -Unique)).Count -eq 1) { "$($writes[0])" } else { ($writes -join ',') }
     return [pscustomobject]@{
-        Status   = $status
-        Written  = Get-Token $s 'written'
-        Verified = Get-Token $s 'verified'
-        Total    = Get-Token $s 'total'
-        Reason   = Get-Token $s 'reason'
-        Fields   = $fields
+        Status = 'OK'; Written = $written; Verified = $verified; Total = $total
+        Reason = '-'; Fields = $keepFields; Duplicates = $ok + $aborts - 1
     }
 }
 

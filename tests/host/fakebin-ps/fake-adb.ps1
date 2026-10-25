@@ -31,9 +31,11 @@ function Get-PadHex([string]$Text) {
 function New-ResultLines([string]$Payload) {
     $last = @(Get-Content -LiteralPath $Payload)[-1]
     $toks = $last -split ' '
-    $cls = ''; $run = ''
+    $cls = ''; $run = ''; $ridx = ''
     for ($i = 0; $i -lt $toks.Count; $i++) {
-        if ($toks[$i] -like 'org.maniac79.nvptool.*') { $cls = $toks[$i]; $run = $toks[$i + 1]; break }
+        if ($toks[$i] -like 'org.maniac79.nvptool.*') {
+            $cls = $toks[$i]; $run = $toks[$i + 1]; $ridx = $toks[$i + 2]; break
+        }
     }
     $op = switch -Wildcard ($cls) {
         '*Read' { 'read' } '*Apply' { 'apply' }
@@ -45,14 +47,21 @@ function New-ResultLines([string]$Payload) {
         if ($env:FAKE_RESPONSE_READ) { $resp = $env:FAKE_RESPONSE_READ }
     } elseif ($env:FAKE_RESPONSE_WRITE) { $resp = $env:FAKE_RESPONSE_WRITE }
 
-    $head = "NVPTOOL_RESULT v=1 schema=1 tool=0.2.6 run=$run op=$op pid=$($script:FakePid)"
+    $eop = $op
+    if ($env:FAKE_OP_LIE -eq '1') { if ($op -eq 'read') { $eop = 'apply' } else { $eop = 'read' } }
+    $head = "NVPTOOL_RESULT v=1 schema=1 tool=0.2.6 run=$run op=$eop pid=$($script:FakePid)"
     $out = @()
     if ($resp -eq 'noout') { return $out }
     $out += "$head ev=begin"
-    if ($env:FAKE_NO_CLAIM -ne '1') { $out += "$head ev=note msg=claim_acquired mode=file" }
+    # Production emits the claim notes from Read only; the write classes never do.
+    if ($op -eq 'read' -and $env:FAKE_NO_CLAIM -ne '1') {
+        $out += "$head ev=note msg=claim_acquired mode=file"
+    }
     if ($env:FAKE_DUP_SKIPPED -eq '1') { $out += "$head ev=note msg=duplicate_skipped" }
     if ($resp -eq 'truncated') { return $out }
-    if ($op -eq 'read' -or $op -eq 'restore') {
+    if ($env:FAKE_BEGIN_ONLY -eq '1') { return $out }
+
+    if ($op -eq 'read') {
         $target = ($env:FAKE_PROFILE -eq 'target')
         if ($target) {
             $sv = @('kVolTblIcx1298HpSeGainHigh', 'kVolTblIcx1298HpSeGainLow',
@@ -68,15 +77,37 @@ function New-ResultLines([string]$Payload) {
             else { $hex = $iv[$i - 4]; $len = 4 }
             $out += "$head ev=field idx=$i key=f$i len=$len val=$hex"
         }
+    } elseif ($op -eq 'restore') {
+        # RestoreField reports the single field it handled.
+        $hex = if ($env:FAKE_BK_HEX) { $env:FAKE_BK_HEX } else { '01000000' }
+        $out += "$head ev=field idx=$ridx key=k$ridx len=4 val=$hex"
     }
+
     $sum = switch ($resp) {
         'fatal' { 'status=FATAL phase=preflight written=0 verified=0 total=8 reason=hal_unavailable' }
         'abort' { 'status=ABORT phase=read written=0 verified=0 total=8 reason=state_changed_since_backup' }
         'incomplete' { 'status=INCOMPLETE phase=write written=2 verified=2 total=8 reason=write_failed_2' }
         default {
-            # A read never writes; the host validates that explicitly.
-            if ($op -eq 'read') { 'status=OK phase=done written=0 verified=8 total=8 reason=-' }
-            else { 'status=OK phase=done written=8 verified=8 total=8 reason=-' }
+            switch ($op) {
+                'read' { 'status=OK phase=read written=0 verified=8 total=8 reason=read_only' }
+                'apply' {
+                    if ($env:FAKE_APPLY_NOOP -eq '1') {
+                        'status=OK phase=done written=0 verified=8 total=8 reason=already_applied'
+                    } else {
+                        $w = if ($env:FAKE_APPLY_WRITTEN) { $env:FAKE_APPLY_WRITTEN } else { '8' }
+                        "status=OK phase=write written=$w verified=8 total=8 reason=-"
+                    }
+                }
+                'restore' {
+                    if ($env:FAKE_RESTORE_NOOP -eq '1') {
+                        'status=OK phase=done written=0 verified=1 total=8 reason=already_restored'
+                    } else {
+                        "status=OK phase=write written=1 verified=1 total=8 reason=restored_$ridx"
+                    }
+                }
+                'restore_reference' { 'status=OK phase=write written=8 verified=8 total=8 reason=-' }
+                default { 'status=FATAL phase=preflight written=0 verified=0 total=8 reason=unknown_class' }
+            }
         }
     }
     $out += "$head ev=summary $sum"
