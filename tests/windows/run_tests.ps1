@@ -135,9 +135,15 @@ Check 'apply rc 0' ($r.Rc -eq 0)
 Check 'apply reports verified' ($r.Out -match 'verified')
 Check 'apply created a backup' (Test-Path (Join-Path (Get-BackupDir) 'baseline.conf'))
 $calls = Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'calls.log') -Raw
-$payloads = @([regex]::Matches($calls, '(?m)^-s SER123 push .* (/data/local/tmp/nvptool-[A-Za-z0-9_-]+\.txt)$') |
-    ForEach-Object { $_.Groups[1].Value })
-Check 'apply phases use different remote payload paths' ($payloads.Count -eq 2 -and $payloads[0] -ne $payloads[1])
+# Windows Add-Content writes CRLF; trim CR before anchoring the remote path.
+$pushLines = @(($calls -split "`n") | ForEach-Object { $_.TrimEnd("`r") } |
+    Where-Object { $_ -match '^-s SER123 push ' })
+$payloads = @($pushLines | ForEach-Object {
+    if ($_ -match ' (/data/local/tmp/nvptool-[A-Za-z0-9_-]+\.txt)$') { $Matches[1] }
+})
+$uniquePayloads = ($pushLines.Count -eq 2 -and $payloads.Count -eq 2 -and $payloads[0] -ne $payloads[1])
+if (-not $uniquePayloads) { Write-Host "  push calls: $($pushLines -join ' | '); parsed payloads: $($payloads -join ', ')" }
+Check 'apply phases use different remote payload paths' $uniquePayloads
 
 Write-Host '== already-modified device is not labelled factory =='
 [void](New-Env); $env:FAKE_PROFILE = 'target'

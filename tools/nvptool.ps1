@@ -45,6 +45,7 @@ $script:CleanupOk = $true
 $script:RemoteLockHeld = $false
 $script:RemoteLock = '/data/local/tmp/nvptool.lock'
 $script:RecoveryRecord = ''
+$script:LocalLockError = ''
 $script:RemotePayloads = @()
 
 function Fail([string]$Message, [int]$Code = 1) {
@@ -572,9 +573,18 @@ function Release-Lock {
         } catch { $script:CleanupOk = $false }
     }
     if ($script:LocalLock) {
-        $script:LocalLock.Dispose()
-        $script:LocalLock = $null
-        Remove-Item -LiteralPath $script:LocalLockPath -Force -ErrorAction SilentlyContinue
+        try {
+            $script:LocalLock.Dispose()
+            Remove-Item -LiteralPath $script:LocalLockPath -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $script:LocalLockPath) {
+                throw 'lock file still exists after removal'
+            }
+        } catch {
+            $script:LocalLockError = $_.Exception.Message
+            $script:CleanupOk = $false
+        } finally {
+            $script:LocalLock = $null
+        }
     }
 }
 
@@ -796,7 +806,11 @@ try {
         Remove-Item -LiteralPath $script:RecoveryRecord -Force -ErrorAction SilentlyContinue
     }
     if (-not $script:CleanupOk -or $script:RemoteLockHeld) {
-        [Console]::Error.WriteLine("nvptool: cleanup incomplete; recovery-required. Original setting: $($script:SettingsState). Remote lock: $($script:RemoteLock). Recovery record: $($script:RecoveryRecord).")
+        $remoteStatus = if ($script:RemoteLockHeld) { "held at $($script:RemoteLock)" } else { 'released' }
+        if ($script:LocalLockError) {
+            [Console]::Error.WriteLine("nvptool: host lock cleanup failed at $($script:LocalLockPath): $($script:LocalLockError)")
+        }
+        [Console]::Error.WriteLine("nvptool: cleanup incomplete; recovery-required. Original setting: $($script:SettingsState). Remote lock: $remoteStatus. Recovery record: $($script:RecoveryRecord).")
         $script:FinalCode = 7
     }
     Remove-RunDir
