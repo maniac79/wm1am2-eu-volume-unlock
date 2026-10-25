@@ -48,6 +48,24 @@ confirm_yes() {
     case "$a" in yes|YES|Yes) return 0 ;; *) return 1 ;; esac
 }
 
+# For steps where doing it is the documented procedure, the default is yes:
+# only an explicit no/n declines. Rebooting is harmless; skipping it leaves the
+# player's apps broken until the user remembers.
+confirm_yes_default() {
+    printf '%s [YES/no] ' "$1"
+    local a; read -r a 2>/dev/null || a=yes
+    case "$a" in no|NO|No|n|N) return 1 ;; *) return 0 ;; esac
+}
+
+reboot_prompt() {
+    if confirm_yes_default "Reboot now so the change takes effect?"; then
+        "$NV" reboot
+    else
+        echo "  Reboot before judging the result, and before using the player's apps."
+        echo "  The change is stored in NVRAM; it is not lost by waiting."
+    fi
+}
+
 run_action() {   # $1 label, rest = nvptool args
     local label="$1"; shift
     hr; echo "  $label"; hr
@@ -92,11 +110,7 @@ while true; do
             hr
             confirm_yes "Continue?" || continue
             if run_action "Applying configuration" apply; then
-                if confirm_yes "Reboot now so the change takes effect?"; then
-                    "$NV" reboot
-                else
-                    echo "  Reboot before judging the result."
-                fi
+                reboot_prompt
                 pause
             fi
             ;;
@@ -106,7 +120,9 @@ while true; do
             echo "  device. A corrupt or foreign backup is rejected."
             hr
             confirm_yes "Restore from backup?" || continue
-            run_action "Restoring" restore
+            if run_action "Restoring" restore; then
+                reboot_prompt
+            fi
             pause
             ;;
         5) "$NV" reboot; pause ;;
@@ -128,7 +144,9 @@ while true; do
             echo "  This is not your device's backup. Only use it if no backup exists."
             hr
             if confirm_yes "Really write the reference profile?"; then
-                run_action "Restoring reference profile" restore-reference
+                if run_action "Restoring reference profile" restore-reference; then
+                    reboot_prompt
+                fi
                 pause
             fi
             ;;

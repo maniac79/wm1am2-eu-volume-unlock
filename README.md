@@ -1,5 +1,22 @@
 # WM1AM2 EU volume cap: NVRAM configuration change (experimental)
 
+> ## ⚠️ EXPERIMENTAL — USE ENTIRELY AT YOUR OWN RISK
+>
+> This tool **writes persistent NVRAM** on a real, expensive device, using a
+> temporary privilege escalation and an undocumented vendor HAL. It can leave your
+> player **unbootable, unstable, or with broken audio**, and recovery may require
+> service tools that are not publicly available.
+>
+> **The author accepts no responsibility or liability** for any damage, data loss,
+> bricking, voided warranty, or other harm caused by using, misusing, or building
+> this software. There is **no warranty of any kind**. If you are not prepared to
+> lose the device, do not run it.
+>
+> **Provenance:** coded with **Cline** driving **DeepSeek v4.1 Flash 1017 (high
+> reasoning)**, with additional independent code reviews performed by **ChatGPT**.
+> Every release is built from a tagged commit with published checksums, and the
+> validation limits are stated in [Testing & Validation Status](#testing--validation-status).
+
 Repair and interoperability tool for a Sony NW-WM1AM2 that I own.
 
 My player was sold in the EU, where the regional firmware applies a lower
@@ -241,10 +258,10 @@ one property or from a reset alone.
 ### Download and inspect the package
 
 For version 0.2.3, use the named **Assets** on the
-[v0.2.5 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.5)
-when they are available: `wm1am2-nvptool-macos-0.2.5.zip`,
-`wm1am2-nvptool-windows-0.2.5.zip` or
-`wm1am2-nvptool-linux-0.2.5.zip`. If those Assets are not shown, wait for the
+[v0.2.5 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.6)
+when they are available: `wm1am2-nvptool-macos-0.2.6.zip`,
+`wm1am2-nvptool-windows-0.2.6.zip` or
+`wm1am2-nvptool-linux-0.2.6.zip`. If those Assets are not shown, wait for the
 release package; GitHub's automatically generated “Source code” archives are
 not ready-to-run packages and contain no built helper APK. The older
 [v0.2.2 release](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.2)
@@ -372,8 +389,9 @@ That cost is part of the procedure, not a defect to work around:
 
 1. Run **one** privileged operation: `read`, **or** `apply`, **or** `restore`,
    **or** `restore-reference`.
-2. **Reboot the player** (`nvptool.sh reboot`, or menu option 5). The volume table
-   is loaded at boot anyway, so `apply` needs the reboot regardless.
+2. **Reboot the player.** The menu asks after every write and defaults to **yes**;
+   on the command line the tool prints `Do it now: nvptool.sh reboot`. The volume
+   table is loaded at boot anyway, so `apply` needs the reboot regardless.
 3. Continue with `status` (free, never privileged) to confirm the result.
 
 | Action | Per boot | Cost |

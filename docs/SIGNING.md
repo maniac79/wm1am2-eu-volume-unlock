@@ -22,6 +22,7 @@ and provenance too.
 | 0.2.3 | `versionCode=6`, **same** dedicated release certificate |
 | 0.2.4 | `versionCode=7`, **same** dedicated release certificate; writes enabled again |
 | 0.2.5 | `versionCode=8`, same certificate; documentation and tooling release |
+| 0.2.6 | `versionCode=9`, same certificate; reboot made part of the process |
 
 `tools/build.sh` defaults to `NVPTOOL_SIGNING_MODE=release`. It requires the
 maintainer's existing keystore (normally `~/.nvptool/nvptool-release.jks`) and

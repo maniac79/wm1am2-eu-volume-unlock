@@ -4,7 +4,7 @@
 #
 # Source this file; do not execute it.
 
-NL_TOOL_VERSION="0.2.5"
+NL_TOOL_VERSION="0.2.6"
 NL_TAG="NVPTOOL"
 NL_PKG="org.maniac79.nvptool"
 NL_HAL="/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk"
@@ -269,6 +269,7 @@ nl_print_reboot_required() {
     printf '\nREBOOT REQUIRED before using the player again: in this boot every new app\n'
     printf 'process is replaced by the payload, so apps (including Settings) will not\n'
     printf 'open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.\n'
+    printf 'Do it now:  %s reboot\n' "${0##*/}"
 }
 
 

@@ -1,4 +1,4 @@
-   SONY NW-WM1AM2 - EU VOLUME CAP TOOL 0.2.5
+   SONY NW-WM1AM2 - EU VOLUME CAP TOOL 0.2.6
    ========================================
 
    READ FIRST - EXPERIMENTAL
@@ -11,7 +11,8 @@
    player is restarted. So the procedure is:
 
      1. Run ONE privileged step: 2 (read) OR 3 (apply) OR 4 (restore).
-     2. Reboot: option 5. (Apply needs the reboot anyway to load the table.)
+     2. Reboot. After every write the menu asks "Reboot now?" - press Enter to
+        accept. From a terminal the tool prints the exact reboot command.
      3. Use option 1 (status) to confirm; it is free and never privileged.
 
    Further privileged steps DO still work in the same boot (measured), but they

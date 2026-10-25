@@ -52,6 +52,23 @@ function Confirm-Yes([string]$Question) {
     return ($a -eq 'yes' -or $a -eq 'YES' -or $a -eq 'Yes')
 }
 
+# Where doing it IS the documented procedure, the default is yes: only an
+# explicit no/n declines. Rebooting is harmless; skipping it leaves the player's
+# apps broken until the user remembers.
+function Confirm-YesDefault([string]$Question) {
+    $a = Read-Host "$Question [YES/no]"
+    return -not ($a -eq 'no' -or $a -eq 'NO' -or $a -eq 'No' -or $a -eq 'n' -or $a -eq 'N')
+}
+
+function Invoke-RebootPrompt {
+    if (Confirm-YesDefault 'Reboot now so the change takes effect?') {
+        [void](Run-Action 'Rebooting' @('reboot'))
+    } else {
+        Write-Host "  Reboot before judging the result, and before using the player's apps."
+        Write-Host '  The change is stored in NVRAM; it is not lost by waiting.'
+    }
+}
+
 function Run-Action([string]$Label, [string[]]$NvArgs) {
     Write-Hr
     Write-Host "  $Label"
@@ -105,11 +122,7 @@ while ($true) {
             Write-Hr
             if (-not (Confirm-Yes 'Continue?')) { break }
             if (Run-Action 'Applying configuration' @('apply')) {
-                if (Confirm-Yes 'Reboot now so the change takes effect?') {
-                    [void](Run-Action 'Rebooting' @('reboot'))
-                } else {
-                    Write-Host '  Reboot before judging the result.'
-                }
+                Invoke-RebootPrompt
             }
             Pause-Menu
         }
@@ -120,7 +133,9 @@ while ($true) {
             Write-Host '  are refused.'
             Write-Hr
             if (-not (Confirm-Yes 'Restore from backup?')) { break }
-            [void](Run-Action 'Restoring' @('restore'))
+            if (Run-Action 'Restoring' @('restore')) {
+                Invoke-RebootPrompt
+            }
             Pause-Menu
         }
         '5' { [void](Run-Action 'Rebooting' @('reboot')); Pause-Menu }
@@ -142,7 +157,9 @@ while ($true) {
             Write-Host "  This is NOT your device's backup."
             Write-Hr
             if (Confirm-Yes 'Really write the reference profile?') {
-                [void](Run-Action 'Restoring reference profile' @('restore-reference'))
+                if (Run-Action 'Restoring reference profile' @('restore-reference')) {
+                    Invoke-RebootPrompt
+                }
                 Pause-Menu
             }
         }

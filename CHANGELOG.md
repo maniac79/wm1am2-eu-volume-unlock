@@ -12,7 +12,29 @@ was published or that physical hardware was tested.
 
 ---
 
-## 0.2.5 — current, experimental pre-release
+## 0.2.6 — current, experimental pre-release
+
+Source commit: the `v0.2.6` tag. `versionName=0.2.6`, `versionCode=9`; same
+dedicated signing certificate. No change to the unlock mechanism: this release
+makes the reboot part of the process instead of a sentence in the output.
+
+- **The reboot is now offered after every write.** Previously only menu option 3
+  (apply) asked; restore and the advanced reference restore changed NVRAM and
+  then silently returned to the menu.
+- **Reboot is the default answer.** The prompt is `[YES/no]`, so pressing Enter
+  performs the documented step; only an explicit `no`/`n` declines, and then the
+  menu says what to do instead.
+- **The CLI prints the command**, not just the fact: `Do it now: nvptool.sh reboot`
+  (or `nvptool.ps1 reboot`), after every privileged step.
+- **README opens with the experimental warning and the liability waiver**, plus
+  how the project was produced (Cline with DeepSeek v4.1 Flash 1017, high
+  reasoning; additional code reviews by ChatGPT).
+- Documentation updated in `README.md` and `QUICKSTART.txt` so the reboot is
+  described as step 2 of the procedure on every platform.
+
+---
+
+## 0.2.5 — withdrawn (binaries removed, tag kept)
 
 Source commit: the `v0.2.5` tag. `versionName=0.2.5`, `versionCode=8`; same
 dedicated signing certificate. No change to the unlock mechanism. This release

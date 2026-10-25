@@ -16,7 +16,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------- constants
-$ToolVersion = '0.2.5'
+$ToolVersion = '0.2.6'
 $Schema      = '1'
 $Pkg         = 'org.maniac79.nvptool'
 $Hal         = '/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk'
@@ -764,6 +764,7 @@ function Invoke-ReadCmd {
     }
     Write-Output ''
     Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload, so apps (including Settings) will not open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.'
+    Write-Output 'Do it now:  nvptool.ps1 reboot'
 }
 
 function Invoke-ApplyCmd {
@@ -815,6 +816,7 @@ function Invoke-ApplyCmd {
     Write-Output "apply OK - $($res2.Verified)/$($res2.Total) verified (wrote $($res2.Written))"
     Write-Output ''
     Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload, so apps (including Settings) will not open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.'
+    Write-Output 'Do it now:  nvptool.ps1 reboot'
     Write-Output "backup: $path"
     Write-Output 'Reboot for the change to take effect.'
 }
@@ -876,6 +878,7 @@ function Invoke-RestoreCmd {
     Write-Output "restore OK ($($bk.Kind)) - reboot to reload the table for these values."
     Write-Output ''
     Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload, so apps (including Settings) will not open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.'
+    Write-Output 'Do it now:  nvptool.ps1 reboot'
 }
 
 function Invoke-RestoreReferenceCmd {
@@ -890,6 +893,7 @@ function Invoke-RestoreReferenceCmd {
     Write-Output "reference profile restored ($($res.Verified)/$($res.Total) verified). Reboot."
     Write-Output ''
     Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload, so apps (including Settings) will not open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.'
+    Write-Output 'Do it now:  nvptool.ps1 reboot'
 }
 
 function Invoke-RebootCmd {

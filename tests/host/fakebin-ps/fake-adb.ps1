@@ -11,7 +11,7 @@ $script:FakePid = if ($env:FAKE_PID) { [int]$env:FAKE_PID } else { 4201 }
 $devices = if ($env:FAKE_DEVICES) { $env:FAKE_DEVICES -split '\s+' } else { @('SER123') }
 $model   = if ($env:FAKE_MODEL) { $env:FAKE_MODEL } else { 'NW-WM1AM2' }
 $fp      = if ($env:FAKE_FP) { $env:FAKE_FP } else { 'SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys' }
-$ver     = if ($env:FAKE_PKGVER) { $env:FAKE_PKGVER } else { '0.2.5' }
+$ver     = if ($env:FAKE_PKGVER) { $env:FAKE_PKGVER } else { '0.2.6' }
 $dest    = if ($env:FAKE_DEST) { $env:FAKE_DEST } else { '03010000' }
 $safe    = if ($env:FAKE_SAFE) { $env:FAKE_SAFE } else { '01000000' }
 
@@ -45,7 +45,7 @@ function New-ResultLines([string]$Payload) {
         if ($env:FAKE_RESPONSE_READ) { $resp = $env:FAKE_RESPONSE_READ }
     } elseif ($env:FAKE_RESPONSE_WRITE) { $resp = $env:FAKE_RESPONSE_WRITE }
 
-    $head = "NVPTOOL_RESULT v=1 schema=1 tool=0.2.5 run=$run op=$op pid=$($script:FakePid)"
+    $head = "NVPTOOL_RESULT v=1 schema=1 tool=0.2.6 run=$run op=$op pid=$($script:FakePid)"
     $out = @()
     if ($resp -eq 'noout') { return $out }
     $out += "$head ev=begin"
