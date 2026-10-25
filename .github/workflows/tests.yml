@@ -157,6 +157,10 @@ jobs:
       # These archives test the exact packaging/launch paths; they are never
       # eligible for an official release and must never be published as one.
       - uses: android-actions/setup-android@v3
+        with:
+          # v3 defaults to the retired `tools` package on some runners.
+          # sdkmanager itself comes from command-line tools installed by the action.
+          packages: platform-tools
       - name: Install pinned Android SDK build inputs
         run: sdkmanager --install 'platforms;android-34' 'build-tools;34.0.0'
 

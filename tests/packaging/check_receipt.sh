@@ -27,13 +27,13 @@ if [ "$MODE" != release ]; then
         grep -q '^release_eligible=false$' "dist/wm1am2-nvptool-$os/SOURCE-COMMIT.txt"
     done
 fi
-python3 tools/release_receipt.py verify --root "$ROOT" --apk "$APK" --receipt "$R" "${FLAGS[@]}"
+python3 tools/release_receipt.py verify --root "$ROOT" --apk "$APK" --receipt "$R" ${FLAGS[@]+"${FLAGS[@]}"}
 T=$(mktemp -d "${TMPDIR:-/tmp}/nvp-receipt.XXXXXX")
 trap 'rm -rf "$T"' EXIT
 cp "$APK" "$T/stale.apk"
 printf '\000' >> "$T/stale.apk"
 if python3 tools/release_receipt.py verify --root "$ROOT" --apk "$T/stale.apk" \
-    --receipt "$R" "${FLAGS[@]}" > /dev/null 2>&1; then
+    --receipt "$R" ${FLAGS[@]+"${FLAGS[@]}"} > /dev/null 2>&1; then
     echo 'modified APK was accepted by the build receipt' >&2; exit 1
 fi
 echo 'PASS: receipt binds APK bytes and rejects a test key for official release'
