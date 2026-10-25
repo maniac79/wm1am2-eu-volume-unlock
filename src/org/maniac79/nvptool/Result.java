@@ -36,6 +36,14 @@ public final class Result {
 
     private static final String PREFIX = "NVPTOOL_RESULT";
 
+    /**
+     * Identity of THIS execution. Every record carries it, so the host can prove
+     * that a begin and a summary belong to the same process, and can tell one
+     * execution from two. Without it a second execution is indistinguishable
+     * from the first and a duplicate looks like a single successful run.
+     */
+    private static final int PID = android.os.Process.myPid();
+
     private final String run;
     private final String op;
     private final String head;
@@ -47,7 +55,8 @@ public final class Result {
                 + " v=1 schema=" + Profile.SCHEMA
                 + " tool=" + Profile.TOOL_VERSION
                 + " run=" + this.run
-                + " op=" + this.op;
+                + " op=" + this.op
+                + " pid=" + PID;
     }
 
     public void begin() {

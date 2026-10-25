@@ -80,10 +80,15 @@ function New-Env {
                      'FAKE_SETTINGS_RESTORE_FAIL', 'FAKE_SETTINGS_GET_FAIL',
                      'FAKE_SETTINGS_LIST_FAIL', 'FAKE_START_FAIL', 'FAKE_APP_MISSING',
                      'FAKE_INSTALLED_APK', 'FAKE_PULL_FAIL', 'FAKE_INSTALL_FAIL',
-                     'NVPTOOL_SERIAL',
+                     'NVPTOOL_SERIAL', 'FAKE_DUP_LATE', 'FAKE_PID', 'FAKE_PID2',
+                     'NVPTOOL_ALLOW_UNVALIDATED_WRITE',
                      'NVPTOOL_ALLOW_NON_BASELINE_RESTORE')) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
     }
+    # The write paths are on a safety hold, so the suite exercises their logic
+    # behind the documented bypass. The hold itself is tested on its own.
+    $env:NVPTOOL_ALLOW_UNVALIDATED_WRITE = '1'
+    $env:NVPTOOL_SETTLE_SECS = '0'   # keep the suite fast; the double read still happens
     return $t
 }
 
@@ -357,6 +362,24 @@ if ($isWindowsOs) {
     Write-Host '  (START-windows.bat not executed: this host is not Windows)'
 }
 Remove-Item -LiteralPath $pkg -Recurse -Force -ErrorAction SilentlyContinue
+
+Write-Host '== write hold: NVRAM writes are refused unless deliberately bypassed =='
+[void](New-Env); Remove-Item Env:NVPTOOL_ALLOW_UNVALIDATED_WRITE -ErrorAction SilentlyContinue
+$r = Run-Nv @('apply')
+Check 'apply is held' ($r.Rc -eq 13)
+Check 'hold explains the duplicate-execution reason' ($r.Out -match 'run more than once')
+Check 'hold makes no success claim' (-not ($r.Out -match 'apply OK'))
+Check 'restore is held' ((Run-Nv @('restore')).Rc -eq 13)
+Check 'restore-reference is held' ((Run-Nv @('restore-reference')).Rc -eq 13)
+$r = Run-Nv @('read')
+Check 'read is not held' (-not ($r.Out -match 'writes are disabled'))
+
+Write-Host '== a request must not execute twice (late duplicate in the settle window) =='
+[void](New-Env); $env:FAKE_DUP_LATE = '1'
+$r = Run-Nv @('read')
+Check 'duplicate execution is rejected' ($r.Rc -ne 0)
+Check 'duplicate execution is not reported as success' (-not ($r.Out -match 'read OK'))
+Check 'duplicate execution names the defect' ($r.Out -match 'begin x2|summary x2|two processes')
 
 Write-Host ''
 Write-Host "PASS=$($script:Pass) FAIL=$($script:Fail)"

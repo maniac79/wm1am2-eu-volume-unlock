@@ -45,6 +45,9 @@ $script:CleanupOk = $true
 $script:RemoteLockHeld = $false
 $script:RemoteLock = '/data/local/tmp/nvptool.lock'
 $script:RecoveryRecord = ''
+# Collection window after the setting is disarmed: a second execution that lands
+# after the first summary must still be inside the snapshot.
+$script:SettleSecs = if ($env:NVPTOOL_SETTLE_SECS) { [int]$env:NVPTOOL_SETTLE_SECS } else { 3 }
 $script:LocalLockError = ''
 $script:RemotePayloads = @()
 
@@ -310,6 +313,17 @@ function Invoke-NvpClass {
         $started = Invoke-Adb '-s' $script:Serial 'shell' 'am start -a android.settings.SETTINGS'
         if ($started.Code -ne 0) { Fail 'could not launch settings after payload' 4 }
 
+        # Disarm immediately. The exemption applies to EVERY zygote fork while it
+        # is present, so the arming window must cover one fork, not the whole poll
+        # loop: ActivityManager retries the start, and each retry is another
+        # execution of the payload.
+        $script:CleanupAttempted = $true
+        try { $script:CleanupOk = (Restore-Settings) -and $script:CleanupOk }
+        catch { $script:CleanupOk = $false }
+        $removedEarly = Invoke-Adb '-s' $script:Serial 'shell' "rm -f $remote"
+        if ($removedEarly.Code -eq 0) { $script:RemotePayloads = @($script:RemotePayloads | Where-Object { $_ -ne $remote }) }
+        else { $script:CleanupOk = $false }
+
         $lines = @()
         for ($i = 0; $i -lt 20; $i++) {
             Start-Sleep -Seconds 1
@@ -318,6 +332,12 @@ function Invoke-NvpClass {
             $lines = @($raw.Output | Where-Object { $_ -match [regex]::Escape("run=$RunId ") })
             if ($lines | Where-Object { $_ -match 'ev=summary' }) { break }
         }
+        # Settle window, then one final read: the snapshot must cover the whole
+        # window, so a later execution cannot fall outside it.
+        if ($script:SettleSecs -gt 0) { Start-Sleep -Seconds $script:SettleSecs }
+        $raw = Invoke-Adb '-s' $script:Serial 'shell' 'logcat -d -s NVPTOOL:V'
+        if ($raw.Code -ne 0) { Fail 'logcat failed: operation outcome unknown' 4 }
+        $lines = @($raw.Output | Where-Object { $_ -match [regex]::Escape("run=$RunId ") })
         $resultFile = Join-Path $script:RunDir "result-$RunId.txt"
         $lines | Set-Content -Path $resultFile -Encoding UTF8
         return [pscustomobject]@{
@@ -327,9 +347,13 @@ function Invoke-NvpClass {
     } finally {
         # The setting is restored before the payload is removed. On failure the
         # lock and recovery record remain, preventing a second unsafe run.
-        $script:CleanupAttempted = $true
-        try { $script:CleanupOk = (Restore-Settings) -and $script:CleanupOk }
-        catch { $script:CleanupOk = $false }
+        # It was already disarmed above; a second attempt would hammer a failing
+        # operation and defeat the "attempted once" invariant.
+        if (-not $script:CleanupAttempted) {
+            $script:CleanupAttempted = $true
+            try { $script:CleanupOk = (Restore-Settings) -and $script:CleanupOk }
+            catch { $script:CleanupOk = $false }
+        }
         try {
             $removed = Invoke-Adb '-s' $script:Serial 'shell' "rm -f $remote"
             if ($removed.Code -ne 0) { $script:CleanupOk = $false }
@@ -367,6 +391,17 @@ function Assert-Result {
     }
     if ($s.IndexOf("op=$Op", [StringComparison]::Ordinal) -lt 0) {
         Fail 'stale result (operation mismatch): outcome UNKNOWN' 4
+    }
+
+    # Reply association: the summary must come from the same execution as the
+    # begin. Two executions produce two begins (rejected above); a mismatch here
+    # means records from different processes were mixed into one snapshot.
+    $bpid = Get-Token $begins[0] 'pid'
+    $spid = Get-Token $s 'pid'
+    if (-not $bpid) { Fail 'malformed result (begin without pid): outcome UNKNOWN' 4 }
+    if (-not $spid) { Fail 'malformed result (summary without pid): outcome UNKNOWN' 4 }
+    if ($bpid -ne $spid) {
+        Fail "result records from two processes (pid $bpid vs $spid): outcome UNKNOWN" 4
     }
 
     $status = Get-Token $s 'status'
@@ -532,6 +567,24 @@ function Get-LatestBaseline {
     return $null
 }
 
+function Assert-WriteEnabled {
+    # One privileged request can execute more than once on device (see
+    # docs/ZYGOTE-SINGLE-EXECUTION.md). For a read that is waste; for a write it
+    # is an unbounded number of NVRAM operations. Writes stay closed until the
+    # single-shot design is validated on hardware.
+    if ($env:NVPTOOL_ALLOW_UNVALIDATED_WRITE -eq '1') { return }
+    [Console]::Error.WriteLine(
+        "nvptool: NVRAM writes are disabled in this build.`n`n" +
+        "Reason: one privileged request can run more than once on the device `n" +
+        "(duplicate execution through the Zygote exemption), which is not safe `n" +
+        "for writes. Reads - 'status' and 'read' - remain available.`n`n" +
+        "This is a deliberate safety hold. Lifting it requires the design in `n" +
+        "docs/ZYGOTE-SINGLE-EXECUTION.md to be validated on an Android 11 `n" +
+        "NW-WM1AM2. Deliberate bypass, at your own risk:`n" +
+        "  NVPTOOL_ALLOW_UNVALIDATED_WRITE=1")
+    exit 13
+}
+
 function Assert-Cleanup([string]$Op) {
     if ($script:CleanupOk) { return }
     Fail (
@@ -646,6 +699,7 @@ function Invoke-ReadCmd {
 }
 
 function Invoke-ApplyCmd {
+    Assert-WriteEnabled
     Initialize-Operation
 
     # 1. back up first; nothing is written until a verified backup exists
@@ -698,6 +752,7 @@ function Invoke-ApplyCmd {
 
 
 function Invoke-RestoreCmd {
+    Assert-WriteEnabled
     $file = ''
     if ($Rest -and $Rest.Count -gt 0) { $file = $Rest[0] }
     Initialize-Operation
@@ -754,6 +809,7 @@ function Invoke-RestoreCmd {
 }
 
 function Invoke-RestoreReferenceCmd {
+    Assert-WriteEnabled
     Initialize-Operation
     $script:RunId = New-RunId
     $r = Invoke-NvpClass 'org.maniac79.nvptool.RestoreReference' 'restore_reference' `

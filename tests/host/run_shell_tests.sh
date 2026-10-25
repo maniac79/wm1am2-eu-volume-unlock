@@ -28,7 +28,11 @@ newenv() {
     printf 'trusted-mock-apk\n' > "$NVPTOOL_APK"
     printf 'apk_sha256=%s\n' "$(shasum -a 256 "$NVPTOOL_APK" | cut -d' ' -f1)" > "$T/SOURCE-COMMIT.txt"
     export PATH="$FAKEBIN:$PATH"
-    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK 2>/dev/null || true
+    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK FAKE_DUP_LATE FAKE_PID FAKE_PID2 2>/dev/null || true
+    # The write paths are on a safety hold, so the suites exercise their logic
+    # behind the documented bypass. The hold itself is tested on its own.
+    export NVPTOOL_ALLOW_UNVALIDATED_WRITE=1
+    export NVPTOOL_SETTLE_SECS=0   # keep the suite fast; the double read still happens
 }
 
 nv() {   # nv <args...> ; sets OUT and RC
@@ -287,23 +291,20 @@ expect_rc "device lock held across apply phases" 1 "$ACQUIRES"
 REC_COUNT=$(find "$NVPTOOL_BACKUP_DIR" -name 'recovery-*.state' | wc -l | tr -d ' ')
 expect_rc "clean phases leave no recovery records" 0 "$REC_COUNT"
 
-echo "== catchable signal restores setting before unlock =="
+echo "== catchable signal leaves no residue =="
 newenv; export FAKE_RESPONSE_READ=noout
 ./tools/nvptool.sh read > "$T/signal.out" 2>&1 & NV_PID=$!
-for _ in $(seq 1 40); do
-    [ -f "$FAKE_STATE_DIR/setting" ] && break
-    sleep 0.1
+# Interrupt once the payload has been pushed. The armed window is now
+# milliseconds by design (disarm happens right after the trigger), so the signal
+# may land before or after the disarm - either way nothing may survive.
+for _ in $(seq 1 100); do
+    grep -q ' push ' "$FAKE_STATE_DIR/calls.log" 2>/dev/null && break
+    sleep 0.05
 done
-if [ -f "$FAKE_STATE_DIR/setting" ]; then
-    kill -TERM "$NV_PID" 2>/dev/null || true
-    wait "$NV_PID" 2>/dev/null || true
-    [ ! -f "$FAKE_STATE_DIR/setting" ] && ok || bad "TERM left temporary setting behind"
-    [ ! -f "$FAKE_STATE_DIR/remote_lock" ] && ok || bad "TERM left device lock despite clean restore"
-else
-    bad "signal test never reached temporary setting"
-    kill -TERM "$NV_PID" 2>/dev/null || true
-    wait "$NV_PID" 2>/dev/null || true
-fi
+kill -TERM "$NV_PID" 2>/dev/null || true
+wait "$NV_PID" 2>/dev/null || true
+[ ! -f "$FAKE_STATE_DIR/setting" ] && ok || bad "TERM left temporary setting behind"
+[ ! -f "$FAKE_STATE_DIR/remote_lock" ] && ok || bad "TERM left device lock despite clean restore"
 
 echo "== menu.sh delegates and shows the orchestrator output =="
 newenv
@@ -318,6 +319,26 @@ expect_rc "menu.sh rc" 0 "$RC"
 expect_has "menu.sh shows the status output" "device      :" "$OUT"
 expect_has "menu.sh lists the backup restore option" "4) Restore from backup" "$OUT"
 expect_hasnt "menu.sh does not claim Windows is read-only" "READ-ONLY for now" "$OUT"
+
+echo "== write hold: NVRAM writes are refused unless deliberately bypassed =="
+newenv; unset NVPTOOL_ALLOW_UNVALIDATED_WRITE
+nv apply
+expect_rc "apply is held" 13 "$RC"
+expect_has "hold explains the duplicate-execution reason" "run more than once" "$OUT"
+expect_hasnt "hold makes no success claim" "apply OK" "$OUT"
+nv restore
+expect_rc "restore is held" 13 "$RC"
+nv restore-reference
+expect_rc "restore-reference is held" 13 "$RC"
+nv read
+expect_hasnt "read is not held" "writes are disabled" "$OUT"
+
+echo "== a request must not execute twice (late duplicate in the settle window) =="
+newenv; export FAKE_DUP_LATE=1; nv read
+expect_rcnz "duplicate execution is rejected" "$RC"
+expect_hasnt "duplicate execution is not reported as success" "read OK" "$OUT"
+if printf '%s' "$OUT" | grep -qE 'bad_begin_count|bad_summary_count'; then ok; else bad "duplicate execution does not name the defect"; fi
+: > "$FAKE_STATE_DIR/calls.log"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

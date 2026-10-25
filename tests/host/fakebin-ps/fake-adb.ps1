@@ -7,6 +7,7 @@ if (-not $S) { [Console]::Error.WriteLine('FAKE_STATE_DIR not set'); exit 2 }
 New-Item -ItemType Directory -Force -Path $S | Out-Null
 Add-Content -LiteralPath (Join-Path $S 'calls.log') -Value ($Argv -join ' ')
 
+$script:FakePid = if ($env:FAKE_PID) { [int]$env:FAKE_PID } else { 4201 }
 $devices = if ($env:FAKE_DEVICES) { $env:FAKE_DEVICES -split '\s+' } else { @('SER123') }
 $model   = if ($env:FAKE_MODEL) { $env:FAKE_MODEL } else { 'NW-WM1AM2' }
 $fp      = if ($env:FAKE_FP) { $env:FAKE_FP } else { 'SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys' }
@@ -44,7 +45,7 @@ function New-ResultLines([string]$Payload) {
         if ($env:FAKE_RESPONSE_READ) { $resp = $env:FAKE_RESPONSE_READ }
     } elseif ($env:FAKE_RESPONSE_WRITE) { $resp = $env:FAKE_RESPONSE_WRITE }
 
-    $head = "NVPTOOL_RESULT v=1 schema=1 tool=0.2.3 run=$run op=$op"
+    $head = "NVPTOOL_RESULT v=1 schema=1 tool=0.2.3 run=$run op=$op pid=$($script:FakePid)"
     $out = @()
     if ($resp -eq 'noout') { return $out }
     $out += "$head ev=begin"
@@ -88,6 +89,12 @@ if ($sub -eq '-s') {
     switch ($rest[0]) {
         'push' {
             Set-Content -LiteralPath (Join-Path $S 'pending') -Value (New-ResultLines $rest[1])
+            if ($env:FAKE_DUP_LATE -eq '1') {
+                $script:FakePid = if ($env:FAKE_PID2) { [int]$env:FAKE_PID2 } else { 4202 }
+                Set-Content -LiteralPath (Join-Path $S 'pending_late') -Value (New-ResultLines $rest[1])
+                $script:FakePid = if ($env:FAKE_PID) { [int]$env:FAKE_PID } else { 4201 }
+                Remove-Item -LiteralPath (Join-Path $S 'lc_reads') -ErrorAction SilentlyContinue
+            }
             exit 0
         }
         'pull' {
@@ -146,6 +153,20 @@ if ($sub -eq '-s') {
     }
     if ($cmd -match 'logcat -d') {
         $l = Join-Path $S 'logcat'
+        # FAKE_DUP_LATE=1: a second execution whose records only appear after the
+        # host has already seen the first summary.
+        $late = Join-Path $S 'pending_late'
+        if (Test-Path $late) {
+            $readsFile = Join-Path $S 'lc_reads'
+            $n = 0
+            if (Test-Path $readsFile) { $n = [int]((Get-Content -LiteralPath $readsFile -Raw).Trim()) }
+            $n++
+            Set-Content -LiteralPath $readsFile -Value "$n"
+            if ($n -ge 2) {
+                Add-Content -LiteralPath $l -Value (Get-Content -LiteralPath $late)
+                Remove-Item -LiteralPath $late -Force
+            }
+        }
         if (Test-Path $l) { Get-Content -LiteralPath $l }
         exit 0
     }

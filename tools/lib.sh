@@ -262,8 +262,31 @@ nl_settings_restore() {
     return 0
 }
 
+# ------------------------------------------------------ temporary write hold
+# One privileged request can execute MORE THAN ONCE on device: the exemption in
+# hidden_api_blacklist_exemptions is consumed by every zygote fork while it is
+# armed, and the Settings trigger is retried by ActivityManager. For a read that
+# is wasteful; for a write it means an unbounded number of NVRAM operations.
+# Until at most one execution per request is proven on hardware, every write
+# path stays closed. See docs/ZYGOTE-SINGLE-EXECUTION.md.
+nl_require_write_enabled() {
+    [ "${NVPTOOL_ALLOW_UNVALIDATED_WRITE:-0}" = "1" ] && return 0
+    nl_die "NVRAM writes are disabled in this build.
+
+Reason: one privileged request can run more than once on the device (duplicate
+execution through the Zygote exemption), and that is not yet safe for writes.
+Reads - 'status' and 'read' - remain available and are unaffected.
+
+This is a deliberate safety hold, not a transient bug. Lifting it requires the
+single-shot design in docs/ZYGOTE-SINGLE-EXECUTION.md to be validated on an
+Android 11 NW-WM1AM2. Bypassing it is possible only on purpose:
+  NVPTOOL_ALLOW_UNVALIDATED_WRITE=1
+and it is then entirely at your own risk." 13
+}
+
 # --------------------------------------------------------- privileged run
 NL_REMOTE_PAYLOAD=""
+NL_SETTLE_SECS="${NVPTOOL_SETTLE_SECS:-3}"
 NL_REMOTE_FILE_CLEANUP_ATTEMPTED=0
 NL_INJECT_RC=1
 NL_CLEANUP_OK=1
@@ -315,6 +338,20 @@ nl_inject() {   # nl_inject <class> <op> <runid> [tool args...]
     nl_adb shell am force-stop com.android.settings >/dev/null 2>&1
     nl_adb shell am start -a android.settings.SETTINGS >/dev/null 2>&1
 
+    # Disarm immediately. The exemption is applied to EVERY zygote fork while it
+    # is present, so the arming window must cover one fork, not the whole poll
+    # loop. Waiting for a summary first leaves the payload live for seconds, and
+    # ActivityManager retries the start in that time: that is where the second
+    # execution comes from.
+    local file_clean=1 setting_clean=1
+    NL_REMOTE_FILE_CLEANUP_ATTEMPTED=1
+    nl_settings_restore || setting_clean=0
+    nl_adb shell "rm -f $NL_REMOTE_PAYLOAD" >/dev/null 2>&1 || file_clean=0
+    [ "$file_clean" = 1 ] && NL_REMOTE_PAYLOAD=""
+
+    # Bounded wait for the first summary, then a settle window, then ONE final
+    # read. The snapshot must cover the whole window: a summary that arrives
+    # after the host stopped reading is exactly what hid the duplicate execution.
     local i lines
     lines=""
     for i in $(seq 1 20); do
@@ -322,14 +359,10 @@ nl_inject() {   # nl_inject <class> <op> <runid> [tool args...]
         lines=$(nl_adb shell "logcat -d -s $NL_TAG:V" 2>/dev/null | tr -d '\r' | grep -F "run=$run " || true)
         if printf '%s' "$lines" | grep -q "ev=summary"; then break; fi
     done
+    if [ "${NL_SETTLE_SECS}" -gt 0 ]; then sleep "$NL_SETTLE_SECS"; fi
+    lines=$(nl_adb shell "logcat -d -s $NL_TAG:V" 2>/dev/null | tr -d '\r' | grep -F "run=$run " || true)
     printf '%s\n' "$lines" > "$NL_RUN_DIR/result.txt"
 
-    # cleanup: only this run's files and the setting we touched
-    local file_clean=1 setting_clean=1
-    NL_REMOTE_FILE_CLEANUP_ATTEMPTED=1
-    nl_adb shell "rm -f $NL_REMOTE_PAYLOAD" >/dev/null 2>&1 || file_clean=0
-    [ "$file_clean" = 1 ] && NL_REMOTE_PAYLOAD=""
-    nl_settings_restore || setting_clean=0
     if [ "$file_clean" = 1 ] && [ "$setting_clean" = 1 ]; then
         NL_CLEANUP_OK=1
     else
@@ -378,6 +411,18 @@ nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
     line=$(sed -n "${sline}p" "$f")
     case "$line" in *"run=$run "*|*"run=$run") ;; *) NL_PARSE_ERR="run_mismatch"; return 3 ;; esac
     case "$line" in *"op=$op"*) ;; *) NL_PARSE_ERR="op_mismatch"; return 3 ;; esac
+
+    # Reply association: the summary must belong to the same execution as the
+    # begin. Two executions produce two begins (rejected above); a summary that
+    # does not match its begin means records from different processes were
+    # mixed into one snapshot.
+    local beginline bpid spid
+    beginline=$(sed -n "${bline}p" "$f")
+    bpid=$(printf '%s' "$beginline" | tr ' ' '\n' | sed -n 's/^pid=//p' | head -1)
+    spid=$(printf '%s' "$line" | tr ' ' '\n' | sed -n 's/^pid=//p' | head -1)
+    [ -n "$bpid" ] || { NL_PARSE_ERR="begin_without_pid"; return 3; }
+    [ -n "$spid" ] || { NL_PARSE_ERR="summary_without_pid"; return 3; }
+    [ "$bpid" = "$spid" ] || { NL_PARSE_ERR="pid_mismatch"; return 3; }
 
     NL_STATUS=$(printf '%s' "$line" | tr ' ' '\n' | sed -n 's/^status=//p' | head -1)
     NL_WRITTEN=$(printf '%s' "$line" | tr ' ' '\n' | sed -n 's/^written=//p' | head -1)

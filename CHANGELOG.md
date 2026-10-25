@@ -11,6 +11,31 @@ that an asset was published or that physical hardware was tested.
 
 ---
 
+## Unreleased — hardening after 0.2.3
+
+Investigation of the duplicate device execution during a single `read` (see
+`docs/ZYGOTE-SINGLE-EXECUTION.md`).
+
+- **Every result record now carries `pid=`.** One execution is distinguishable
+  from two, and a summary is provably its own begin's. The host rejects more than
+  one begin, more than one summary, and any begin/summary pid mismatch.
+- **The exemption is disarmed immediately after the trigger**, before any log is
+  collected. Previously the payload stayed armed for the whole poll loop (up to
+  20 s), which is the window ActivityManager's retries used to execute it again.
+- **A settle window and one final snapshot** replace "stop at the first summary":
+  a second execution that lands after the first summary is now inside the
+  snapshot instead of invisible.
+- **NVRAM writes are on a safety hold** (exit 13, deliberate bypass
+  `NVPTOOL_ALLOW_UNVALIDATED_WRITE=1`). One request can still execute more than
+  once on device; for reads that is waste, for writes it is an unbounded number
+  of NVRAM operations. `status` and `read` are unaffected.
+- Not fixed yet: a second fork landing inside the disarm round trip can still
+  execute. Detection is deterministic; prevention needs the single-shot claim
+  described in that document, which depends on an SELinux fact this repository
+  cannot establish.
+
+---
+
 ## 0.2.3 — experimental release
 
 `versionName=0.2.3`, `versionCode=6`; the intended official APK retains the

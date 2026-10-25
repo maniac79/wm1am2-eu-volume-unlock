@@ -3,6 +3,14 @@
 
    READ FIRST - EXPERIMENTAL
    -------------------------
+   *** NVRAM WRITES ARE DISABLED IN THIS BUILD ***
+
+   Options 3 (apply), 4 (restore) and the advanced reference restore stop with
+   exit code 13 and write nothing. Reason: on Android 11 one privileged request
+   can execute more than once on the device, and that is not yet safe for
+   writes. Options 1 (status), 2 (read) and 5 (reboot) work normally.
+   Details: docs/ZYGOTE-SINGLE-EXECUTION.md in the repository.
+
    The project author reports a successful ORIGINAL MANUAL change on one
    NW-WM1AM2. The finished 0.2.3 macOS, Windows and Linux tools, automatic
    backup and backup-based restore have NOT been validated on physical hardware.

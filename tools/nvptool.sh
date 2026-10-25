@@ -139,6 +139,7 @@ nl_cmd_read() {
 }
 
 nl_cmd_apply() {
+    nl_require_write_enabled
     nl_select_device
     nl_lock_acquire
     nl_preflight
@@ -215,6 +216,7 @@ Recovery: 'nvptool.sh read', then 'nvptool.sh restore'
 }
 
 nl_cmd_restore() {
+    nl_require_write_enabled
     local file="${1:-}" kind
     nl_select_device
     nl_lock_acquire
@@ -288,6 +290,7 @@ restored fields are rewritten with the same values)." 7
 }
 
 nl_cmd_restore_reference() {
+    nl_require_write_enabled
     nl_select_device
     nl_lock_acquire
     nl_preflight

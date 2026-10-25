@@ -70,7 +70,7 @@ emit_results() {
         RESP="${FAKE_RESPONSE_WRITE:-$RESP}"
     fi
 
-    local head="NVPTOOL_RESULT v=1 schema=1 tool=0.2.3 run=$run op=$id"
+    local head="NVPTOOL_RESULT v=1 schema=1 tool=0.2.3 run=$run op=$id pid=${FAKE_PID:-4201}"
     begin="$head ev=begin"
     case "$RESP" in
         noout) return 0 ;;
@@ -148,7 +148,19 @@ handle_shell() {
             [ -f "$S/remote_owner" ] && cat "$S/remote_owner" || exit 1 ;;
         *"rmdir /data/local/tmp/nvptool.lock"*)
             rm -f "$S/remote_owner" "$S/remote_lock" ;;
-        *"logcat -d"*)                       [ -f "$S/logcat" ] && cat "$S/logcat" ;;
+        *"logcat -d"*)
+            # FAKE_DUP_LATE=1 simulates a SECOND execution whose records only
+            # reach the buffer after the host has already seen the first
+            # summary. That is exactly the case an early snapshot cannot see.
+            if [ -f "$S/pending_late" ]; then
+                n=$(( $(cat "$S/lc_reads" 2>/dev/null || echo 0) + 1 ))
+                printf '%s' "$n" > "$S/lc_reads"
+                if [ "$n" -ge 2 ]; then
+                    cat "$S/pending_late" >> "$S/logcat"
+                    rm -f "$S/pending_late"
+                fi
+            fi
+            [ -f "$S/logcat" ] && cat "$S/logcat" ;;
         *"settings list global"*)
             [ "${FAKE_SETTINGS_LIST_FAIL:-0}" = 1 ] && exit 1
             [ -f "$S/setting" ] && printf 'hidden_api_blacklist_exemptions=%s\n' "$(cat "$S/setting")" ;;
@@ -210,6 +222,13 @@ if [ "$sub" = "-s" ]; then
     if [ "$sub" = "push" ]; then
         cp "$1" "$S/payload.txt" 2>/dev/null || true
         emit_results "$S/payload.txt" > "$S/pending"
+        # A second execution of the same request, reported with a different pid.
+        # It is only released into the buffer after the host has seen the first
+        # summary, which is what FAKE_DUP_LATE=1 reproduces.
+        if [ "${FAKE_DUP_LATE:-0}" = "1" ]; then
+            FAKE_PID="${FAKE_PID2:-4202}" emit_results "$S/payload.txt" > "$S/pending_late"
+            rm -f "$S/lc_reads"
+        fi
         exit 0
     fi
     if [ "$sub" = "shell" ]; then
