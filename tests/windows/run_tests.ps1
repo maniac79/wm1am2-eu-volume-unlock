@@ -29,7 +29,15 @@ function Resolve-HostExe([string]$Want) {
 $PS = Resolve-HostExe $PowerShellHost
 $selfExe = (Get-Process -Id $PID).Path
 $selfId  = "$($PSVersionTable.PSVersion)|$($PSVersionTable.PSEdition)"
-$childId = (& $PS -NoProfile -Command '$PSVersionTable.PSVersion.ToString() + "|" + $PSVersionTable.PSEdition' 2>&1 | Out-String).Trim()
+# Quote-free probe: Windows PowerShell mangles embedded double quotes when it
+# passes an argument to a native executable, so a literal "|" arrives broken
+# (observed as "At line:1 char:39" under 5.1). [char]124 is the same character
+# without any quoting to get wrong.
+$probe = '$PSVersionTable.PSVersion.ToString() + [char]124 + $PSVersionTable.PSEdition'
+$childId = (& $PS -NoProfile -Command $probe 2>&1 | Out-String).Trim()
+if ($childId -notmatch '^\d+\.\d+[0-9.]*\|(Core|Desktop)$') {
+    throw "could not determine the host that child processes run under (got: '$childId')"
+}
 
 Write-Host "harness host : $selfId  [$selfExe]"
 Write-Host "child   host : $childId  [$PS]"
