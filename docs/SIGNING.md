@@ -20,6 +20,7 @@ and provenance too.
 | Scheme | APK Signature Scheme v3, minSDK 28 |
 | 0.2.2 | `versionCode=5`, dedicated release key |
 | 0.2.3 | `versionCode=6`, **same** dedicated release certificate |
+| 0.2.4 | `versionCode=7`, **same** dedicated release certificate; writes enabled again |
 
 `tools/build.sh` defaults to `NVPTOOL_SIGNING_MODE=release`. It requires the
 maintainer's existing keystore (normally `~/.nvptool/nvptool-release.jks`) and

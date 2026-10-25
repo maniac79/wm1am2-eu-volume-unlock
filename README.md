@@ -216,10 +216,10 @@ one property or from a reset alone.
 ### Download and inspect the package
 
 For version 0.2.3, use the named **Assets** on the
-[v0.2.3 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.3)
-when they are available: `wm1am2-nvptool-macos-0.2.3.zip`,
-`wm1am2-nvptool-windows-0.2.3.zip` or
-`wm1am2-nvptool-linux-0.2.3.zip`. If those Assets are not shown, wait for the
+[v0.2.4 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.4)
+when they are available: `wm1am2-nvptool-macos-0.2.4.zip`,
+`wm1am2-nvptool-windows-0.2.4.zip` or
+`wm1am2-nvptool-linux-0.2.4.zip`. If those Assets are not shown, wait for the
 release package; GitHub's automatically generated “Source code” archives are
 not ready-to-run packages and contain no built helper APK. The older
 [v0.2.2 release](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.2)

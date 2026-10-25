@@ -11,7 +11,13 @@ that an asset was published or that physical hardware was tested.
 
 ---
 
-## Unreleased — hardening after 0.2.3
+## 0.2.4 — current, experimental pre-release
+
+Source commit: the `v0.2.4` tag. `versionName=0.2.4`, `versionCode=7`; same
+dedicated signing certificate as 0.2.2 and 0.2.3. The unlock mechanism is
+unchanged. What changed: NVRAM writes are enabled again under the documented
+one-privileged-step-per-boot procedure, and duplicate device executions are
+accepted only when every execution succeeded.
 
 - **Writes are enabled again, under a documented per-boot procedure.** One
   privileged request executes more than once on this firmware and cannot be
@@ -48,7 +54,7 @@ Investigation of the duplicate device execution during a single `read` (see
 
 ---
 
-## 0.2.3 — experimental release
+## 0.2.3 — withdrawn (binaries removed, tag kept)
 
 `versionName=0.2.3`, `versionCode=6`; the intended official APK retains the
 0.2.2 dedicated release signing certificate. No automatic app uninstall and

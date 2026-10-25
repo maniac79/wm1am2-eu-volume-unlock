@@ -70,7 +70,7 @@ expect_has "unknown firmware message" "unsupported firmware" "$OUT"
 
 newenv; export FAKE_PKGVER="1.0.0"; nv apply
 expect_rcnz "stale app version aborts" "$RC"
-expect_has "version mismatch message" "does not match 0.2.3" "$OUT"
+expect_has "version mismatch message" "installed app version '1.0.0' does not match" "$OUT"
 
 echo "== read + backup =="
 newenv; nv read
