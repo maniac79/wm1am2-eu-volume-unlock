@@ -125,6 +125,11 @@ Known limitations: not hardware-validated; the output-power increase is
 unmeasured; only the documented NW-WM1AM2 / Android 11 / 1.09.00 profile is
 supported.
 
+Withdrawn because its binaries contain the three fail-open/false-success defects
+fixed in 0.2.1 (see above) and, like every build up to 0.2.1, it is signed with
+the retired debug key. **Do not build or run the 0.2.0 source either**: it is an
+ancestor of the current branch, so it is part of normal Git history.
+
 ---
 
 ## 0.1.0 — withdrawn preview (historical)
@@ -151,4 +156,6 @@ Known defects in that build:
   `versionCode` at all — it identifies itself as no particular version.
 - **Not hardware-tested** beyond the author's initial manual unlock.
 
-Do not use it. If you have those files, replace them with 0.2.0.
+**Do not build or run it.** Its binaries are gone; its source stays reachable
+only so the history can be audited. If you still have those files, delete them
+and use the current release named at the top of this file.
