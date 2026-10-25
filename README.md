@@ -16,7 +16,58 @@ refuses to run on any other model.
 
 ---
 
-## Experimental status — read before using
+## Testing & Validation Status
+
+**Experimental. Read this before using anything here.**
+
+- The **original unlock method** was successfully tested by the project author
+  on their own Sony NW-WM1AM2.
+- The **current hardened implementation has not been tested end-to-end on
+  physical hardware.**
+- The **automatic backup feature has NOT been tested on the author's Walkman.**
+- **Backup-based restoration has NOT been tested on physical hardware.**
+- **Linux has NOT been tested by the project author.**
+- **Windows has NOT been tested by the project author.**
+- **Automated tests and Windows CI results are not physical-device
+  validation.** They run against a simulated `adb` and a mock device. They
+  cannot exercise USB behaviour, adb versions, driver quirks, real HAL timing,
+  or firmware differences.
+- **No other firmware versions or Walkman models have been confirmed
+  compatible.** Only `1.09.00` on `NW-WM1AM2` is targeted, and everything else
+  is refused.
+
+### Platform support matrix
+
+| Platform | Write path | Automated tests | Physical device |
+|---|---|---|---|
+| macOS | `nvptool.sh` (bash) | yes — simulated adb | **not tested** |
+| Linux | `nvptool.sh` (bash) | yes — simulated adb | **not tested** (author never ran it on Linux) |
+| Windows | `nvptool.ps1` (PowerShell) | yes — simulated adb, incl. CI | **not tested** |
+
+Windows has full feature parity in the *code* (status, read, apply, restore,
+reference-restore, reboot) and its tests pass, but **feature parity in code is
+not evidence that it works on a Walkman.**
+
+### What the automated tests do establish
+
+Offline, with no hardware: the guards reject unknown models and firmware; a
+write cannot happen without a verified backup; FATAL/ABORT/INCOMPLETE/timeout/
+stale/malformed/duplicate results are never treated as success; a failed
+cleanup exits 7 instead of claiming success; backups are integrity-checked and
+bound to one device; corrupt or foreign backups are refused; a modified device
+is never labelled as a factory baseline; and both language implementations
+produce byte-identical backup files and the same state digest.
+
+### What they do not establish
+
+That the payload runs at all on your firmware; that the temporary privilege
+step behaves the same on your adb version; that the volume change is audible;
+that interruption recovery works on real hardware; or that the value written is
+the one the boot loader ends up using.
+
+---
+
+## Supported configuration and limitations
 
 * **One documented, tested configuration only:**
 
@@ -44,7 +95,7 @@ refuses to run on any other model.
 
 * **Known limitations.** No atomicity across the eight writes (a failure can
   leave a partial state, which the tool reports precisely); the Windows package
-  is read-only for now; recovery depends on having a verified backup for *that*
+  has never been run on hardware; recovery depends on having a verified backup for *that*
   device; firmware updates are untested and may undo or alter the result.
 
 * **Verified so far** on the profile above: the device-side read/apply/restore
@@ -232,10 +283,11 @@ adb reboot
 ./tools/nvptool.sh restore         # per-field restore from the backup
 ```
 
-`tools/nvptool.sh` is the supported entry point on macOS/Linux. On Windows the
-package is **read-only** (status, full read, reboot): the bundled runner refuses
-write-capable classes unless forced, because it has no backup orchestration.
-See the notice in the archive.
+`tools/nvptool.sh` is the entry point on macOS/Linux; `tools/nvptool.ps1` is the
+Windows equivalent and has the same guards, backup requirement, digest binding,
+result validation and cleanup semantics. Windows has **never been run on a
+Walkman** - passing tests only show that the logic behaves correctly against a
+simulated device.
 
 
 `Apply` prints how many of the eight fields were written and verified. Every
@@ -310,7 +362,8 @@ The spawn occasionally produces no output — re-run the command.
 ```
 src/org/maniac79/nvptool/Nvp.java       HAL client: get/set + read-back verify
 src/org/maniac79/nvptool/Profile.java   profile, field schema, guards
-tools/inject.ps1                        strict runner (Windows; read-only use)
+tools/nvptool.ps1                       host CLI / orchestrator (Windows)
+tools/inject.ps1                        strict runner; refuses write classes
 src/org/maniac79/nvptool/Result.java    structured completion records
 src/org/maniac79/nvptool/Read.java      privileged read
 src/org/maniac79/nvptool/Apply.java     write the configuration

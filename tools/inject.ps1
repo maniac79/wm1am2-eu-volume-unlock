@@ -15,22 +15,26 @@ param(
     [int]$RunUid = 1000,
     [string]$Seinfo = 'platform:targetSdkVersion=29:complete',
     [string]$Hal = '/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk',
-    [int]$WaitSeconds = 20,
-    # Write-capable classes are refused by default. This runner has no backup
-    # orchestration, so allowing a write from here would bypass "backup first".
-    [switch]$AllowUnsafeWrite
+    [int]$WaitSeconds = 20
 )
 
 $ErrorActionPreference = 'Stop'
 
+# This runner is intentionally NOT a write path. Write-capable classes are
+# refused unconditionally: they require a verified backup, a state digest and
+# operation reporting, which only nvptool.ps1 provides. There is deliberately
+# no override switch, so a normal user cannot reach an unprotected NVRAM write.
 $writeClasses = @(
     'org.maniac79.nvptool.Apply',
     'org.maniac79.nvptool.RestoreField',
     'org.maniac79.nvptool.RestoreReference'
 )
-if (($writeClasses -contains $ClassName) -and (-not $AllowUnsafeWrite)) {
-    Write-Error ("refusing to run write-capable class '$ClassName': this runner takes no " +
-                 'backup. Use the macOS/Linux tool (nvptool.sh) for writes.')
+if ($writeClasses -contains $ClassName) {
+    # [Console]::Error + exit, not Write-Error: with $ErrorActionPreference='Stop'
+    # a Write-Error would terminate before the intended exit code is reached.
+    [Console]::Error.WriteLine(
+        "refusing to run write-capable class '$ClassName': writes require a verified " +
+        'backup and digest. Use nvptool.ps1 apply / nvptool.ps1 restore instead.')
     exit 3
 }
 $Tag = 'NVPTOOL'

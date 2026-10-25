@@ -62,6 +62,13 @@ public final class Driver {
             org.maniac79.nvptool.RestoreField.main(rest);
         } else if ("restore_ref".equals(op)) {
             org.maniac79.nvptool.RestoreReference.main(rest);
+        } else if ("digest".equals(op)) {
+            byte[][] cur = new byte[IProperties.KEYS.length][];
+            for (int k = 0; k < cur.length; k++) {
+                cur[k] = IProperties.getRaw(IProperties.KEYS[k]);
+            }
+            System.out.println("DIGEST=" + org.maniac79.nvptool.Profile.digest(cur));
+            return;
         } else {
             System.err.println("unknown op: " + op);
             System.exit(64);

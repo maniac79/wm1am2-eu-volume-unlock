@@ -76,8 +76,11 @@ That is correct behaviour, and it has a consequence:
 
 ## 7. Failure and recovery
 
-- [ ] Disconnect USB mid-`apply`: the tool must report an unknown outcome or a
-      disconnect, **not** success; a journal line must exist.
+- [x] Interrupted-write handling is covered by MOCKED tests only (simulated adb
+      returning no/truncated/stale results, and a simulated disconnect).
+- **Do NOT** deliberately unplug USB during a real NVRAM write on the owner's
+  only Walkman. Real-device interruption behaviour is therefore **UNVERIFIED**
+  and must be recorded as such, not as passed.
 - [ ] With two devices attached, every command aborts.
 - [ ] Corrupt the backup hex by hand: `restore` refuses it.
 - [ ] Delete `hidden_api_blacklist_exemptions` mid-run is not possible to
@@ -88,3 +91,26 @@ That is correct behaviour, and it has a consequence:
 
 For each item record: pass / fail / not run, the exact command, and the observed
 output. Anything not run must be reported as **not run**, not as passed.
+
+---
+
+## Provenance of the archives you test
+
+- [ ] Release archives are built from a **clean** working tree, so
+      `SOURCE-COMMIT.txt` names exactly the commit they were built from — no
+      `+dirty` suffix.
+- [ ] `SOURCE-COMMIT.txt` commit matches `git rev-parse HEAD` at build time.
+- [ ] `SHA256SUMS.txt` inside the archive verifies every file.
+- [ ] The commit recorded in the archive is the one that was reviewed.
+
+## About this unit specifically
+
+This Walkman is **already modified**, so it cannot provide a verified original
+EU (factory) baseline backup. Consequences to record honestly:
+
+- the first `read` will be classified `snapshot`, and no `baseline.conf` exists;
+- `restore` will refuse (exit 20), and `restore <snapshot>` will refuse without
+  explicit consent (exit 21);
+- the only route back to a known configuration on this unit is
+  `restore-reference`, which writes values recorded from one unit and is **not**
+  a factory backup.

@@ -1,0 +1,62 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows (simulated adb, no device)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PowerShell version
+        shell: pwsh
+        run: $PSVersionTable.PSVersion.ToString()
+
+      - name: Parse all PowerShell scripts
+        shell: pwsh
+        run: |
+          $files = @(
+            'tools/nvptool.ps1',
+            'tools/inject.ps1',
+            'packaging/windows/menu.ps1',
+            'tests/host/fakebin-ps/fake-adb.ps1',
+            'tests/windows/run_tests.ps1'
+          )
+          $bad = $false
+          foreach ($f in $files) {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $PWD $f), [ref]$null, [ref]$errs)
+            if ($errs) {
+              foreach ($e in $errs) { Write-Host "::error file=$f::$($e.Message)" }
+              $bad = $true
+            }
+          }
+          if ($bad) { exit 1 }
+          Write-Host 'All PowerShell scripts parse.'
+
+      # Simulated adb only. This is NOT physical-device validation.
+      - name: Windows orchestration tests (simulated adb)
+        shell: pwsh
+        run: ./tests/windows/run_tests.ps1
+
+  linux-bash:
+    name: Linux (bash suites, simulated adb, no device)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Java payload tests (mock HAL)
+        run: ./tests/host/run_java_tests.sh
+
+      - name: Bash host tests (fake adb)
+        run: ./tests/host/run_shell_tests.sh
