@@ -241,8 +241,9 @@ this tool as unsupported on that build until it is updated for it.
 ### Easiest way — download, extract, double-click
 
 Grab the archive for your OS from
-the [v0.2.0 release](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.0)
-(this is the **only** published download; older previews have been withdrawn):
+the [v0.2.1 release](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.1)
+(this is the **only** published download; the 0.2.0 and 0.1.0 builds have been
+withdrawn, and their Git tags are kept for traceability only):
 
 | Archive | Starter |
 |---|---|

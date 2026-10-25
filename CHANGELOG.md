@@ -9,7 +9,16 @@ safety defects.
 
 ---
 
-## Unreleased — 0.2.1 (fixes only, not yet released)
+## 0.2.1 — current, experimental pre-release
+
+Source commit: the `v0.2.1` tag. Replaces the withdrawn 0.2.0 binaries: those
+contained the three defects below (the Windows menu in particular printed
+nothing after any action), so they are no longer downloadable. Its Git tag stays
+for traceability.
+
+Version metadata: `versionName=0.2.1`, `versionCode=4` (upgrades an installed
+0.2.0 or 1.1.0 helper in place — same signing certificate, see
+`docs/SIGNING.md`). The unlock mechanism itself is unchanged.
 
 Audit findings fixed after the 0.2.0 tag. No change to the unlock mechanism
 itself: every code change tightens failure handling, and the rest is
@@ -50,7 +59,7 @@ documentation.
 
 ---
 
-## 0.2.0 — experimental pre-release
+## 0.2.0 — withdrawn (binaries removed, tag kept)
 
 Source commit: the `v0.2.0` tag. Replaces the withdrawn 0.1.0 preview.
 

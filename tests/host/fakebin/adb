@@ -14,7 +14,7 @@ DEVICES="${FAKE_DEVICES:-SER123}"
 MODEL="${FAKE_MODEL:-NW-WM1AM2}"
 FP="${FAKE_FP:-SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys}"
 RESP="${FAKE_RESPONSE:-ok}"
-PKGVER="${FAKE_PKGVER:-0.2.0}"
+PKGVER="${FAKE_PKGVER:-0.2.1}"
 DEST="${FAKE_DEST:-03010000}"
 SAFE="${FAKE_SAFE:-01000000}"
 
@@ -66,13 +66,13 @@ emit_results() {
         RESP="${FAKE_RESPONSE_WRITE:-$RESP}"
     fi
 
-    local head="NVPTOOL_RESULT v=1 schema=1 tool=0.2.0 run=$run op=$id"
+    local head="NVPTOOL_RESULT v=1 schema=1 tool=0.2.1 run=$run op=$id"
     begin="$head ev=begin"
     case "$RESP" in
         noout) return 0 ;;
         truncated) printf '%s\n' "$begin" ; return 0 ;;
         stale)  printf '%s\n' "$begin"
-                printf 'NVPTOOL_RESULT v=1 schema=1 tool=0.2.0 run=STALE-999 op=%s ev=summary status=OK phase=done written=8 verified=8 total=8 reason=-\n' "$id"
+                printf 'NVPTOOL_RESULT v=1 schema=1 tool=0.2.1 run=STALE-999 op=%s ev=summary status=OK phase=done written=8 verified=8 total=8 reason=-\n' "$id"
                 return 0 ;;
         malformed) printf '%s\n' "$begin"
                 printf '%s ev=summary status=BOGUS phase=done written=8 verified=8 total=8 reason=-\n' "$head"

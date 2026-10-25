@@ -17,7 +17,7 @@ import java.security.MessageDigest;
  */
 public final class Profile {
 
-    public static final String TOOL_VERSION = "0.2.0";
+    public static final String TOOL_VERSION = "0.2.1";
     public static final String SCHEMA = "1";
 
     public static final String EXPECTED_MODEL = "NW-WM1AM2";
