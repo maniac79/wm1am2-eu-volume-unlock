@@ -1,8 +1,8 @@
 # Manual hardware validation plan (written for 0.2.5; historical)
 
-**This is a 0.2.5-era document, kept as evidence of that pass.** Released
-v0.2.6 is commit `a8be4de`; the host-validation fixes on the unreleased
-`fix/0.2.6-review` branch have no hardware evidence at all.
+**This is a 0.2.5-era document, kept as evidence of that pass.** v0.2.6 was
+released at commit `a8be4de`; the current release is v0.2.7, which carries only
+host-validation fixes and has no hardware evidence at all.
 
 **Status, for 0.2.5 only: the macOS items for `status`, `read`, `apply`,
 `restore-reference` and `restore` were run on the author's unit; the Windows

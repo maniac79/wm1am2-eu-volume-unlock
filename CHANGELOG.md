@@ -12,9 +12,9 @@ was published or that physical hardware was tested.
 
 ---
 
-## 0.2.7 — source-ready, not yet published
+## 0.2.7 — current, experimental pre-release
 
-Source: this branch tip, on top of `v0.2.6` (`a8be4de`). `versionName=0.2.7`,
+Source commit: the `v0.2.7` tag. `versionName=0.2.7`,
 `versionCode=10`; same dedicated signing certificate. Host validation only: no
 change to the unlock mechanism, claim mechanism, gain profiles, signing
 certificate or backup schema, and no claim to fix the underlying
@@ -43,7 +43,7 @@ Zygote/Settings problem.
 results cited elsewhere come from the 0.2.4-0.2.6 macOS passes on one unit; none
 of them exercised this validation code.
 
-## 0.2.6 — previous release (tag kept; assets retired when 0.2.7 is published)
+## 0.2.6 — previous release (tag kept; assets retired)
 
 Source commit: the `v0.2.6` tag. `versionName=0.2.6`, `versionCode=9`; same
 dedicated signing certificate. No change to the unlock mechanism: this release

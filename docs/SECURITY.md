@@ -111,8 +111,8 @@ The original manual method reached the vendor HAL on the author's unit. With
 (8/8 written), `restore` and `restore-reference`. A separate 0.2.6 run of
 `apply` on the already-patched unit reported `wrote 0` and is not an
 eight-write result. The Windows and Linux tools have not been run on a
-Walkman, nothing here is a second-unit result, and the unreleased
-`fix/0.2.6-review` branch has no hardware evidence.
+Walkman, nothing here is a second-unit result, and release v0.2.7 (host
+validation only) has no hardware evidence.
 An eight-field NVRAM operation is not atomic, and the normal restore code
 intentionally rejects certain unexpected current values. No claim is made
 that every damaged state can be recovered by this tool.

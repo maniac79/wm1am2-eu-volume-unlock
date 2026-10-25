@@ -262,8 +262,7 @@ one property or from a reset alone.
 
 ### Download and inspect the package
 
-This 0.2.7 source is not a published release yet. When it is published, use
-the named **Assets** on the
+For version 0.2.7, use the named **Assets** on the
 [v0.2.7 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.7):
 `wm1am2-nvptool-macos-0.2.7.zip`, `wm1am2-nvptool-windows-0.2.7.zip` or
 `wm1am2-nvptool-linux-0.2.7.zip`. GitHub's automatically generated “Source
