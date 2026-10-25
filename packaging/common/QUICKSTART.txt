@@ -19,9 +19,13 @@
    Details: docs/ZYGOTE-SINGLE-EXECUTION.md in the repository.
 
    The project author reports a successful ORIGINAL MANUAL change on one
-   NW-WM1AM2. The finished 0.2.3 macOS, Windows and Linux tools, automatic
-   backup and backup-based restore have NOT been validated on physical hardware.
+   NW-WM1AM2. The finished 0.2.4 macOS tool WAS exercised on that unit: a
+   privileged read, a real reference-profile write (cap returned after reboot)
+   and a real apply (8/8 fields written, cap off after reboot). The Windows and
+   Linux tools have NOT been run on a Walkman, and restore-from-backup has not
+   been run on hardware either - only the reference restore has.
    Automated tests use simulated adb and a mock HAL. They are not a Walkman test.
+   One physical unit is not a compatibility statement.
    Only NW-WM1AM2, Android 11, Sony firmware 1.09.00 and fingerprint
    SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys are supported.
 

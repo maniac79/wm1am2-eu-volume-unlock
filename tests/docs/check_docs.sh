@@ -84,7 +84,7 @@ else
 fi
 
 echo "== QUICKSTART must carry the validation limits =="
-for phrase in 'NOT been validated on physical hardware' 'simulated adb' \
+for phrase in 'NOT been run on a Walkman' 'simulated adb' \
               'no exploit, no risk' \
               'A snapshot of an already-modified player is NOT proof of the original EU baseline.'; do
     if grep -qF "$phrase" "$QS"; then ok; else bad "QUICKSTART lacks: $phrase"; fi

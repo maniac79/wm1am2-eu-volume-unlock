@@ -22,29 +22,54 @@ displays properties and is not a compatibility check.
 
 **Experimental. Read this before using anything here.**
 
-- The **original unlock method** was successfully tested by the project author
-  on their own Sony NW-WM1AM2.
-- The **current hardened implementation has not been tested end-to-end on
-  physical hardware.**
-- The **automatic backup feature has NOT been tested on the author's Walkman.**
-- **Backup-based restoration has NOT been tested on physical hardware.**
-- **Linux has NOT been tested by the project author.**
-- **Windows has NOT been tested by the project author.**
-- **Automated tests and Windows CI results are not physical-device
-  validation.** They run against a simulated `adb` and a mock device. They
-  cannot exercise USB behaviour, adb versions, driver quirks, real HAL timing,
-  or firmware differences.
-- **No other firmware versions or Walkman models have been confirmed
-  compatible.** Only `1.09.00` on `NW-WM1AM2` is targeted, and everything else
-  is refused.
+What was actually run, and where:
+
+| Item | Status |
+|---|---|
+| Original unlock method | tested by the author on their NW-WM1AM2 (manual) |
+| `read` (privileged, duplicate-aware) | **run on hardware**, 0.2.4 packaged macOS archive |
+| `apply` (real NVRAM write, 8/8) | **run on hardware** — `apply OK - 8/8 verified (wrote 8)` |
+| `restore-reference` (real NVRAM write) | **run on hardware** — `8/8 verified`, cap returned after reboot |
+| Automatic backup | **exercised on hardware**: the `apply` run above wrote and verified a `baseline` backup on the device |
+| `restore` from a backup file | **NOT tested on hardware** (only the reference restore was) |
+| Linux tool | **not tested on hardware** — simulated adb only |
+| Windows tool | **not tested on hardware** — simulated adb only, under PowerShell 5.1 and 7 in CI |
+| Interruption handling | mock-tested only — do not unplug USB mid-write |
+
+**What "tested" means here:** one physical unit, the author's, firmware `1.09.00`.
+A single unit is not a compatibility statement.
+
+**Automated tests are not device validation.** They run against a simulated `adb`
+and a mock device; they cannot exercise USB behaviour, adb versions, driver
+quirks, real HAL timing or firmware differences. Current results:
+
+| Suite | Result |
+|---|---|
+| Java payload (mock HAL) | 42/42 |
+| Bash host (fake adb) | 131/131 |
+| PowerShell host (simulated adb) | 94/94 |
+| Documentation consistency | 33/33 |
+
+CI runs four jobs on every push — Linux bash suites, Windows PowerShell 5.1,
+Windows PowerShell 7, and a job that exercises the **packaged macOS archive** —
+all green on the `v0.2.4` commit.
+
+**One privileged step per boot.** A single privileged request executes more than
+once on the device, which cannot be prevented on this firmware, and afterwards
+every new app process is replaced by the payload until the player is restarted.
+See [docs/ZYGOTE-SINGLE-EXECUTION.md](docs/ZYGOTE-SINGLE-EXECUTION.md) for the
+measurements and the procedure.
+
+**No other firmware versions or Walkman models have been confirmed compatible.**
+Only `1.09.00` on `NW-WM1AM2` is targeted, and everything else is refused.
 
 ### Platform support matrix
 
 | Platform | Write path | Automated tests | Physical device |
 |---|---|---|---|
-| macOS | `nvptool.sh` (bash) | yes — simulated adb | **packaged 0.2.3 not tested** |
+| macOS | `nvptool.sh` (bash) | yes — simulated adb + packaged-archive CI job | **packaged 0.2.4: read, apply, restore-reference** |
 | Linux | `nvptool.sh` (bash) | yes — simulated adb | **not tested** |
-| Windows | `nvptool.ps1` (PowerShell) | yes — simulated adb, incl. CI | **not tested** |
+| Windows | `nvptool.ps1` (PowerShell) | yes — simulated adb, PS 5.1 and 7 in CI | **not tested** |
 
 Windows has full feature parity in the *code* (status, install, read, apply,
 restore, reference-restore, reboot) and its tests pass, but **feature parity in code is
