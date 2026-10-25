@@ -93,8 +93,18 @@ try {
     New-Item -ItemType Directory -Path $env:FAKE_STATE_DIR | Out-Null
 
     function Run-Nv([string]$Action) {
-        $Output = & $PS -NoProfile -ExecutionPolicy Bypass -File $Nv $Action 2>&1
-        return [pscustomobject]@{ Rc = $LASTEXITCODE; Output = ($Output -join "`n") }
+        # Windows PowerShell 5.1 turns redirected native stderr into a
+        # NativeCommandError under Stop. The missing-helper read is expected to
+        # fail; keep its stderr and exit code for the strict assertion below.
+        $prior = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $Output = @(& $PS -NoProfile -ExecutionPolicy Bypass -File $Nv $Action 2>&1)
+            $Rc = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prior
+        }
+        return [pscustomobject]@{ Rc = $Rc; Output = ($Output -join "`n") }
     }
     $Result = Run-Nv 'status'
     if ($Result.Rc -ne 0 -or $Result.Output -notmatch 'NW-WM1AM2') {
