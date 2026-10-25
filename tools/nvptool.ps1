@@ -547,6 +547,22 @@ function Invoke-ApplyCmd {
     $path = Save-Backup $kind
     [void](Load-Backup $path)
 
+    # Fail closed: if the privileged read phase could not put the temporary
+    # setting back, the device is not clean. Do not start a second privileged
+    # run, and do not write NVRAM on top of an unclean state.
+    if (-not $script:CleanupOk) {
+        Fail ("apply aborted after the backup-read phase: the temporary setting " +
+              "hidden_api_blacklist_exemptions could NOT be restored.`n`n" +
+              "The NVRAM write phase was NOT started, so this run wrote nothing.`n" +
+              "A valid backup was taken first:`n" +
+              "  backup: $path`n`n" +
+              "This is a recovery-required state, not a clean result:`n" +
+              "  Check:    adb shell settings get global hidden_api_blacklist_exemptions`n" +
+              "  Expected: null (stock) or your original value`n" +
+              "  Original: $($script:SettingsState)`n`n" +
+              "Fix that setting before running apply again.") 7
+    }
+
     # 2. write, bound to the digest of the backup just taken (Java-compatible:
     #    Profile.digest keeps a trailing newline after the eighth field)
     $digest = Get-CanonicalDigest -HexValues $script:CurrentHex -TrailingNewline $true
@@ -594,20 +610,32 @@ function Invoke-RestoreCmd {
     }
     Write-Output "restoring from: $file (kind=$($bk.Kind))"
 
-    $cleanupFail = $false
     for ($i = 0; $i -lt 8; $i++) {
         $script:RunId = New-RunId
         $r = Invoke-NvpClass 'org.maniac79.nvptool.RestoreField' 'restore' $script:RunId @("$i", $bk.Hex[$i])
-        if (-not $script:CleanupOk) { $cleanupFail = $true }
         if (-not $r.Found) { Fail "field ${i}: no completion record, outcome UNKNOWN. Re-run read." 4 }
         $res = Assert-Result 'restore' $script:RunId $r.File
         if ($res.Status -ne 'OK') {
             Fail "field ${i}: $($res.Status) ($($res.Reason)); fields 0..$($i - 1) were restored" 5
         }
         Write-Output "  field $i : $($res.Reason)"
+
+        # Fail closed between fields: a field that leaves the temporary setting
+        # behind makes the device unclean, so no further field may be written.
+        if (-not $script:CleanupOk) {
+            Fail ("restore stopped after field ${i}: the NVRAM field was restored and verified, " +
+                  "but the temporary setting hidden_api_blacklist_exemptions could NOT be put back.`n`n" +
+                  "  Restored: fields 0..${i} (verified)`n" +
+                  "  NOT written: $(7 - $i) field(s)`n`n" +
+                  "No further field was written. This is a recovery-required state, not a clean result:`n" +
+                  "  Check:    adb shell settings get global hidden_api_blacklist_exemptions`n" +
+                  "  Expected: null (stock) or your original value`n" +
+                  "  Original: $($script:SettingsState)`n`n" +
+                  "Fix that setting before running restore again (it is safe to re-run: already " +
+                  "restored fields are rewritten with the same values).") 7
+        }
     }
 
-    if ($cleanupFail) { $script:CleanupOk = $false }
     Assert-Cleanup 'restore'
     Write-Output "restore OK ($($bk.Kind)) - reboot to reload the table for these values."
 }

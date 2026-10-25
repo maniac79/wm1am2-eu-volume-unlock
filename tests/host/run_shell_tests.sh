@@ -191,6 +191,55 @@ expect_has "recovery state stated" "recovery-required" "$OUT"
 newenv; export FAKE_SETTINGS_RESTORE_FAIL=1; nv read
 expect_rc "read cleanup failure rc" 7 "$RC"
 
+echo "== apply stops before the write phase when the read phase is unclean =="
+newenv; : > "$FAKE_STATE_DIR/calls.log"; export FAKE_SETTINGS_RESTORE_FAIL=1; nv apply
+expect_rc "aborted apply rc" 7 "$RC"
+expect_has "aborted apply says the write never started" "write phase was NOT started" "$OUT"
+expect_has "aborted apply still reports its backup" "backup:" "$OUT"
+# One privileged run = the backup read. A second one would be the write.
+NINJ=$(grep -c 'settings put global hidden_api_blacklist_exemptions' "$FAKE_STATE_DIR/calls.log" 2>/dev/null || true)
+expect_rc "only the backup read ran, no write phase" 1 "$NINJ"
+expect_has "the fake setting really was left behind" "NVPTOOL-PAYLOAD" \
+    "$(cat "$FAKE_STATE_DIR/setting" 2>/dev/null)"
+
+echo "== restore stops between fields when cleanup fails =="
+newenv; nv read
+expect_rc "prep read rc" 0 "$RC"
+: > "$FAKE_STATE_DIR/calls.log"
+export FAKE_SETTINGS_RESTORE_FAIL=1
+nv restore
+expect_rc "aborted restore rc" 7 "$RC"
+expect_hasnt "aborted restore no success claim" "restore OK" "$OUT"
+expect_has "aborted restore names the field it stopped after" "stopped after field 0" "$OUT"
+expect_has "aborted restore counts the unwritten fields" "NOT written: 7 field(s)" "$OUT"
+# One privileged run after the reset = field 0 only; six more would follow.
+NINJ=$(grep -c 'settings put global hidden_api_blacklist_exemptions' "$FAKE_STATE_DIR/calls.log" 2>/dev/null || true)
+expect_rc "exactly one field was written" 1 "$NINJ"
+
+echo "== restore-reference cleanup failure is a failure =="
+newenv; export FAKE_SETTINGS_RESTORE_FAIL=1; nv restore-reference
+expect_rc "restore-reference cleanup rc" 7 "$RC"
+expect_hasnt "restore-reference no success claim" "reference profile restored" "$OUT"
+expect_hasnt "restore-reference no reboot advice" "Reboot." "$OUT"
+expect_has "restore-reference states recovery-required" "recovery-required" "$OUT"
+expect_has "restore-reference names the setting" "hidden_api_blacklist_exemptions" "$OUT"
+expect_has "reference restore really left the setting dirty" "NVPTOOL-PAYLOAD" \
+    "$(cat "$FAKE_STATE_DIR/setting" 2>/dev/null)"
+
+echo "== menu.sh delegates and shows the orchestrator output =="
+newenv
+PKG="$T/pkg menu"
+mkdir -p "$PKG"
+cp packaging/common/menu.sh "$PKG/"
+cp tools/nvptool.sh tools/lib.sh "$PKG/"
+chmod +x "$PKG/menu.sh" "$PKG/nvptool.sh"
+OUT=$(printf '1\n\n0\n' | ( cd "$PKG" && ./menu.sh ) 2>&1)
+RC=$?
+expect_rc "menu.sh rc" 0 "$RC"
+expect_has "menu.sh shows the status output" "device      :" "$OUT"
+expect_has "menu.sh lists the backup restore option" "4) Restore from backup" "$OUT"
+expect_hasnt "menu.sh does not claim Windows is read-only" "READ-ONLY for now" "$OUT"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -ne 0 ]; then printf 'Failures:%s\n' "$FAILED"; exit 1; fi

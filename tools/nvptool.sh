@@ -122,6 +122,27 @@ nl_cmd_apply() {
     digest=$(nl_canonical | nl_sha256)
     nl_journal "apply-backup-ok" "kind=$kind digest=$digest"
 
+    # Fail closed: if the privileged read phase could not put the temporary
+    # setting back, the device is not clean. Do not start a second privileged
+    # run, and do not write NVRAM on top of an unclean state.
+    if [ "${NL_CLEANUP_OK:-1}" != "1" ]; then
+        nl_journal "apply-abort-unclean" "phase=backup-read"
+        nl_die "apply aborted after the backup-read phase: the temporary setting
+hidden_api_blacklist_exemptions could NOT be restored.
+
+The NVRAM write phase was NOT started, so this run wrote nothing.
+A valid backup was taken first:
+  backup: $NL_BACKUP_FILE
+
+This is a recovery-required state, not a clean result:
+
+  Check:    adb shell settings get global hidden_api_blacklist_exemptions
+  Expected: null (stock) or your original value
+  Original: ${NL_SETTINGS_STATE:-unknown}
+
+Fix that setting before running apply again." 7
+    fi
+
     # 2. write, bound to the digest of the backup just taken
     NL_RUN_ID="$(date +%s)-$$-$RANDOM"
     nl_journal "apply-write-start" "digest=$digest"
@@ -183,12 +204,11 @@ Re-run with NVPTOOL_ALLOW_NON_BASELINE_RESTORE=1 if that is really what you want
 
     printf 'restoring from: %s (kind=%s)\n' "$file" "$kind"
 
-    local i run cleanup_fail=0
+    local i run
     for i in 0 1 2 3 4 5 6 7; do
         run="$(date +%s)-$$-$RANDOM"
         nl_journal "restore-start" "field=$i"
         nl_inject "org.maniac79.nvptool.RestoreField" "restore" "$run" "$i" "${NL_BK_HEX[$i]}" >/dev/null
-        [ "${NL_CLEANUP_OK:-1}" = "1" ] || cleanup_fail=1
         if [ "${NL_INJECT_RC:-1}" = "3" ]; then
             nl_journal "restore-unknown" "field=$i"
             nl_die "field $i: no completion record, outcome UNKNOWN. Re-run 'nvptool.sh read'." 4
@@ -199,9 +219,30 @@ Re-run with NVPTOOL_ALLOW_NON_BASELINE_RESTORE=1 if that is really what you want
         fi
         nl_journal "restore-field-ok" "field=$i reason=$NL_REASON"
         printf '  field %s: %s\n' "$i" "$NL_REASON"
+
+        # Fail closed between fields: a field that leaves the temporary setting
+        # behind makes the device unclean, so no further field may be written.
+        if [ "${NL_CLEANUP_OK:-1}" != "1" ]; then
+            nl_journal "restore-abort-unclean" "field=$i"
+            nl_die "restore stopped after field $i: the NVRAM field was restored and
+verified, but the temporary setting hidden_api_blacklist_exemptions could NOT
+be put back.
+
+  Restored: fields 0..$i (verified)
+  NOT written: $((7 - i)) field(s)
+
+No further field was written. This is a recovery-required state, not a clean
+result:
+
+  Check:    adb shell settings get global hidden_api_blacklist_exemptions
+  Expected: null (stock) or your original value
+  Original: ${NL_SETTINGS_STATE:-unknown}
+
+Fix that setting before running restore again (it is safe to re-run: already
+restored fields are rewritten with the same values)." 7
+        fi
     done
 
-    [ "$cleanup_fail" = "0" ] || NL_CLEANUP_OK=0
     nl_require_cleanup "restore"
     nl_journal "restore-ok" "file=$file kind=$kind"
     printf 'restore OK (%s) - reboot to reload the table for these values.\n' "$kind"
@@ -220,6 +261,9 @@ nl_cmd_restore_reference() {
     [ "${NL_INJECT_RC:-1}" = "3" ] && nl_die "no completion record, outcome UNKNOWN" 4
     nl_parse "restore_reference" "$NL_RUN_ID" || nl_die "malformed result ($NL_PARSE_ERR)" 4
     [ "$NL_STATUS" = "OK" ] || nl_die "reference restore $NL_STATUS ($NL_REASON)" 5
+    # The reference restore writes NVRAM, so a leftover payload setting is a
+    # recovery-required state here exactly as it is for apply and restore.
+    nl_require_cleanup "restore-reference"
     nl_journal "restore-reference-ok" "verified=$NL_VERIFIED"
     printf 'reference profile restored (%s/%s verified). Reboot.\n' "$NL_VERIFIED" "$NL_TOTAL"
 }

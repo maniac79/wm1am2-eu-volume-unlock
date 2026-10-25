@@ -85,8 +85,11 @@ the one the boot loader ends up using.
 * **It uses temporary privilege escalation.** To reach the vendor HAL the tool
   spawns a process in the `platform_app` SELinux domain via CVE-2024-31317, a
   publicly documented Android zygote vulnerability. "No root and no bootloader
-  unlock required" does **not** mean "no exploit and no risk" — it means the
-  escalation is temporary and nothing persistent is installed.
+  unlock required" does **not** mean "no exploit and no risk". The escalation
+  itself lasts only for the command, but two things outlive it: the helper app
+  (`org.maniac79.nvptool`) stays installed until you remove it with
+  `adb uninstall org.maniac79.nvptool`, and the NVRAM values stay changed until
+  you restore them.
 
 * **It changes persistent NVRAM.** Eight audio calibration fields are written to
   factory NVRAM. They survive reboots. A mis-write can leave the player in a
@@ -157,7 +160,8 @@ Full technical writeup, including the things that did *not* work:
 Not touched: `ro.product.destination` (still `03010000`, CEW),
 `ro.user.destination`, `ro.safe_volume.default`, the `ro.vendor.eq.voltbl_id.*`
 selectors, and any identity field (serial number, model ID, product code).
-The original values are in `Rollback.java`, so the change is reversible.
+Your own pre-write backup holds the original values — that backup, not a file in
+this repository, is the only record of what your unit contained.
 
 ---
 
@@ -222,9 +226,12 @@ on this device and it also auto-updates Chrome and Play services:
 adb shell pm disable-user --user 0 com.android.vending
 ```
 
-After any firmware update, re-run `Read` and check
+After any firmware update, run `Read` again and check
 `adb shell getprop vendor.safe_volume.enabled`. If it says `01000000`, the cap
-is back and `Apply` needs to be run again.
+is back — but do **not** simply re-run `Apply`. The tool pins the build
+fingerprint and refuses any build it was not written for (exit 11), so a new
+firmware needs a port first: check the fingerprint, and if it changed, treat
+this tool as unsupported on that build until it is updated for it.
 
 
 ---
@@ -252,6 +259,7 @@ Extract, double-click the starter, and pick a menu option:
 4) Restore from backup  per-field restore, verified
 5) Reboot the player
 6) Requirements / where is adb
+0) Exit
 ```
 
 **Two different "checks" — don't confuse them.** *Status* reads three system
@@ -268,6 +276,11 @@ Each archive also contains `QUICKSTART.txt`, written for someone who has never
 used `adb` before.
 
 ### From source
+
+The APK is signed with a pinned certificate so `adb install -r` upgrades an
+existing helper instead of failing: see [docs/SIGNING.md](docs/SIGNING.md). The
+keystore is never committed or packaged, and `build.sh` aborts if the signing
+identity changes.
 
 ```bash
 # 1. build + install the tool (one package; version is checked at runtime)
@@ -318,7 +331,7 @@ it properly. See section 6 of [docs/FINDINGS.md](docs/FINDINGS.md).
 Only `0` is success. Scripts and menus branch on the code, never on the
 presence of output.
 
-### Rollback
+### Rollback (restore from your own backup)
 
 ```bash
 ./tools/nvptool.sh restore          # per-field, from your verified backup
@@ -395,11 +408,14 @@ table that ship inside the firmware, and an update can replace either. Re-check
 after any update:
 
 ```bash
+adb shell getprop ro.build.fingerprint
 adb shell getprop vendor.safe_volume.enabled
 ```
 
-`01000000` means the cap is back — run `Apply` again and reboot. `00000000`
-means it survived.
+`01000000` means the cap is back. Do not simply run `Apply` again: the tool
+refuses any build whose fingerprint it does not know (exit 11), so a new
+firmware needs an explicit port before it is touched. `00000000` means the
+change survived.
 
 **Should I block firmware updates?**
 Recommended, and it is a separate one-line step — see *Firmware updates* above.
@@ -419,10 +435,23 @@ No. The tool is guarded to `NW-WM1AM2`. The volume-table identifiers are
 specific to the `icx1298` audio board and do not exist on other codecs.
 
 **I ran `Apply` and nothing sounds different.**
-Reboot — the table is only loaded by init at boot, so the change cannot take
-effect before a restart. Then check `vendor.safe_volume.enabled` and confirm it
-reads `00000000`. If `Apply` printed fewer than 8/8 verified fields, re-run it:
-the spawn step is occasionally flaky and produces no output at all.
+Reboot first — the table is only loaded by init at boot, so the change cannot
+take effect before a restart. Then check `vendor.safe_volume.enabled`.
+
+What to do next depends on what the tool actually reported, because "nothing
+happened" and "we do not know what happened" are different states:
+
+| reported | meaning | what to do |
+|---|---|---|
+| `apply OK - 8/8 verified` | the write completed and was read back | reboot and compare |
+| exit 3 | read/backup phase incomplete | nothing was written — safe to retry |
+| exit 4 | no completion record: outcome **unknown** | run `Read` and compare with the backup path that was printed; do not assume nothing changed |
+| exit 5 | definite write failure | a partial state is possible: run `Read`, then `restore` |
+| exit 7 | write finished, cleanup failed | recovery-required: fix the setting, then re-check |
+
+Retrying is only clearly safe when the tool says nothing was written (exit 3).
+After an unknown outcome (exit 4) the honest first step is to measure the current
+state, not to write again.
 
 **How much louder is it, really?**
 Unknown, and we are not going to invent a number. The two shipped tables differ
@@ -432,12 +461,28 @@ minimum set of fields actually needed, and whether the High Gain switch becomes
 audible after the change (see `docs/FINDINGS.md` §2 and §7).
 
 **Does it affect battery life, Plexamp, Chrome or streaming?**
-No. It changes audio calibration values only. No background service, process or
-hook is installed — nothing from this tool keeps running.
+Probably not, but we do not claim it is impossible to notice. The tool writes
+audio calibration values only: it installs no service, receiver, hook or
+launcher activity, and nothing from it keeps running after the command exits.
+The helper APK stays installed until you uninstall it, but the system never
+starts it by itself. Battery impact is expected to be nil at the same volume
+setting, and a raised output level can plausibly draw more current — none of
+this has been measured. Third-party apps are not modified; whether any of them
+behaves differently at higher gain has not been tested.
 
 **Can I undo it?**
-Yes. Run `Rollback` and reboot. It restores the eight fields to the values
-recorded from the tested device and verifies each write.
+Only from a backup taken before the first write. Run `./tools/nvptool.sh restore`
+(menu option 4) and reboot: it restores the eight fields from your newest
+verified **baseline** backup, per field, and verifies each one.
+
+If no baseline exists (for example a player modified by an earlier release) the
+`restore` path refuses with exit 20 on purpose — a backup of an already-modified
+player is labelled `snapshot` and is not a factory state. The advanced
+`restore-reference` command writes a profile recorded from a supported reference
+unit instead; that is that unit's calibration, not a factory restore, and it
+requires explicit confirmation. There is no `Rollback` class any more: the
+hard-coded restoration shortcut of the withdrawn 0.1.0 preview was removed
+because it ignored your device's own values.
 
 **Do I need to compile anything?**
 No. Download the archive for your OS from *Releases*, extract it and

@@ -6,6 +6,18 @@ $Here = $PSScriptRoot
 Set-Location $Here
 $NV = Join-Path $Here 'nvptool.ps1'
 
+# Use the PowerShell host that is running this menu. The shipped launcher starts
+# powershell.exe, so that path is unchanged, but a pwsh session (or a non-Windows
+# CI host) is no longer silently redirected to a different interpreter.
+function Get-HostExe {
+    $p = (Get-Process -Id $PID).Path
+    if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    $c = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    return 'powershell'
+}
+$PSExe = Get-HostExe
+
 function Write-Hr { Write-Host ('-' * 60) }
 function Pause-Menu {
     Write-Host ''
@@ -44,7 +56,10 @@ function Run-Action([string]$Label, [string[]]$NvArgs) {
     Write-Hr
     Write-Host "  $Label"
     Write-Hr
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $NV @NvArgs
+    # Out-Host, not a bare call: every call site discards the function's return
+    # value with [void](...), which would also discard the orchestrator's stdout -
+    # the user would see the header and nothing else.
+    & $PSExe -NoProfile -ExecutionPolicy Bypass -File $NV @NvArgs | Out-Host
     $rc = $LASTEXITCODE
     if ($rc -ne 0) {
         Write-Host ''

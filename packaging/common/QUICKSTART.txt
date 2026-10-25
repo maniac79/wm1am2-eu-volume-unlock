@@ -1,139 +1,197 @@
-SONY NW-WM1AM2 - EU VOLUME CAP TOOL
-===================================
+   SONY NW-WM1AM2 - EU VOLUME CAP TOOL
+   ===================================
 
-READ THIS FIRST - EXPERIMENTAL
-------------------------------
-  This is an experimental tool with exactly ONE tested configuration:
+   READ THIS FIRST - EXPERIMENTAL
+   ------------------------------
+   This tool has exactly ONE supported configuration:
 
-      NW-WM1AM2, Android 11, Sony firmware 1.09.00
-      fingerprint SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys
+       NW-WM1AM2, Android 11, Sony firmware 1.09.00
+       fingerprint SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys
 
-  Any other model or firmware is refused. It has never been run on a second
-  player.
+   Any other model or firmware is refused. It has never been run on a second
+   player.
 
-  It uses a temporary privilege escalation (CVE-2024-31317) to reach a vendor
-  HAL. "No root, no bootloader unlock" does NOT mean "no exploit, no risk".
+   What has NOT been validated on physical hardware:
 
-  It writes eight values into factory NVRAM. They persist across reboots. A
-  verified backup is taken automatically before every write, and the restore
-  path is per-field and checked - but if the backup is lost, recovery depends
-  on the built-in reference profile or on Sony service.
+     - The hardened implementation has not been run end-to-end on a Walkman.
+     - Automatic backup has not been tested on physical hardware.
+     - Backup-based restore has not been tested on physical hardware.
+     - Linux and Windows have not been tested by the author on a device.
+     - The size of the volume change has never been measured.
+     - The automated tests use a simulated adb and a mock device. They prove
+       the control flow and the guards, NOT hardware compatibility.
 
-  Windows: this package is READ-ONLY for now (status, full read, reboot).
-  Apply and restore are only available on macOS and Linux until the Windows
-  path has been validated.
+   It uses a temporary privilege escalation (CVE-2024-31317) to reach a vendor
+   HAL. "No root, no bootloader unlock" does NOT mean "no exploit, no risk".
+   The escalation itself is temporary, but two things outlive the run: the
+   helper app stays installed until you uninstall it, and the NVRAM values
+   stay changed until you restore them.
 
-  Status vs. full read:
-    - "Status" uses plain getprop: no app, no privilege, no change.
-    - "Full NVP read" uses the privileged helper and briefly touches a
-      system setting (restored afterwards). It reads only, but it is NOT a
-      "changes nothing" operation.
+   It writes eight values into factory NVRAM. They persist across reboots and
+   across app uninstalls. A verified backup is taken automatically before every
+   write, and restore is per-field and checked.
 
+   IMPORTANT for an already-modified player: if the player was already changed
+   by an earlier version of this tool (the author's own unit included), it has
+   NO verified original EU baseline backup. A backup taken from a modified
+   player is labelled "snapshot", is not a factory baseline, and is not used
+   automatically. For such a player the only ways back are the advanced
+   reference-profile restore described at the end, or Sony service.
 
-What this does
---------------
-European WM1AM2 players ship with a lower output-volume ceiling than the same
-hardware sold elsewhere. This tool switches the player back to the non-EU
-output-volume settings and re-enables the "High Gain" option.
-
-It changes eight calibration values in the player's factory NVRAM. No root, no
-bootloader unlock, no firmware modification. Option 3 in the menu undoes it.
-
-
-What you need
--------------
-  - A Sony NW-WM1AM2
-  - A USB cable that carries data (not a charge-only cable)
-  - "adb" (Android Platform Tools) on your computer - see below
-  - About five minutes
+   Status vs. full read:
+     - "Status" uses plain getprop: no app, no privilege, no change.
+     - "Full NVP read" uses the privileged helper and briefly touches a
+       system setting (restored afterwards). It reads only, but it is NOT a
+       "changes nothing" operation.
 
 
-Step 1 - Do you have adb?
--------------------------
-Open the menu (see Step 3). If adb is missing, the menu tells you and shows
-these instructions again. Short version:
+   What this does
+   --------------
+   European WM1AM2 players ship with a lower output-volume ceiling than the same
+   hardware sold elsewhere. This tool switches the player back to the non-EU
+   output-volume settings and re-enables the "High Gain" option.
 
-  Download:  https://developer.android.com/tools/releases/platform-tools
+   It changes eight calibration values in the player's factory NVRAM. No root,
+   no bootloader unlock, no firmware modification.
 
-You do NOT need the full Android SDK. Just the Platform Tools package.
-
-After unzipping you get a folder named "platform-tools". Do ONE of these:
-
-  Easy way:   move that folder into THIS folder, so that
-                platform-tools/adb        exists (macOS / Linux)
-                platform-tools\adb.exe    exists (Windows)
-
-  Or:         add the platform-tools folder to your system PATH, then reopen
-              the terminal / this window.
-
-If adb is installed but Windows/macOS cannot find it, the "Easy way" above is
-the most reliable fix - the menu looks for platform-tools right next to itself
-before it looks anywhere else.
-
-Mac note: if double-clicking START-macos.command shows "cannot be opened
-because it is from an unidentified developer", right-click the file, choose
-"Open", and confirm. That is macOS quarantine, not a problem with the file.
+   How large the change is remains unmeasured: the two shipped volume tables
+   differ in 3202 of 15738 bytes, which is consistent with a modest change
+   weighted towards the top of the volume range, but nobody has produced an
+   attenuation measurement. Menu option 3 WRITES; it is not an undo.
 
 
-Step 2 - Prepare the player
----------------------------
-On the Walkman:
-
-  1. Settings > About device > tap "Build number" seven times
-     (this unlocks Developer options)
-  2. Settings > System > Developer options > enable "USB debugging"
-  3. Connect the USB cable to the computer
-  4. A prompt appears on the player: "Allow USB debugging?"
-     Tick "Always allow from this computer" and tap OK.
-
-If the prompt never appears, unplug and replug the cable. It can take a few
-seconds; sometimes you need to change the USB mode on the player.
+   What you need
+   -------------
+     - A Sony NW-WM1AM2
+     - A USB cable that carries data (not a charge-only cable)
+     - "adb" (Android Platform Tools) on your computer - see Step 1
+     - About five minutes
 
 
-Step 3 - Run the tool
----------------------
-  macOS    double-click  START-macos.command
-  Windows  double-click  START-windows.bat
-  Linux    run           ./START-linux.sh
+   Step 1 - Do you have adb?
+   -------------------------
+   Open the menu (Step 3). If adb is missing, option 6 shows these instructions
+   again. Short version:
 
-A menu appears:
+     Download:  https://developer.android.com/tools/releases/platform-tools
 
-  1) Check status            read-only; shows the current values
-  2) Enable the fix          writes the values, then offers a reboot
-  3) Restore factory setting undoes everything
-  4) Reboot the player
-  5) Where is adb? / requirements
+   You do NOT need the full Android SDK. Just the Platform Tools package.
 
-Start with 1 to see the current state, then use 2.
+   After unzipping you get a folder named "platform-tools". Do ONE of these:
 
-The helper app does not have to be installed beforehand - the menu offers to
-install it from nvptool.apk when needed.
+     Easy way:   move that folder into THIS folder, so that
+                   platform-tools/adb        exists (macOS / Linux)
+                   platform-tools\adb.exe    exists (Windows)
 
+     Or:         add the platform-tools folder to your system PATH, then reopen
+                 the terminal / this window.
 
-Step 4 - Reboot and check
--------------------------
-The new volume table is only loaded while the player boots, so a reboot is
-required. The menu offers it.
+   If adb is installed but Windows/macOS cannot find it, the "Easy way" above is
+   the most reliable fix - the menu looks for platform-tools right next to itself
+   before it looks anywhere else.
 
-To confirm afterwards, use option 1 and look for:
-
-    ro.safe_volume.enabled = 00000000     fix is active
-    ro.safe_volume.enabled = 01000000     factory setting (still capped)
-
-Or from a terminal:   adb shell getprop vendor.safe_volume.enabled
+   Mac note: if double-clicking START-macos.command shows "cannot be opened
+   because it is from an unidentified developer", right-click the file, choose
+   "Open", and confirm. That is macOS quarantine, not a problem with the file.
 
 
-Good to know
-------------
-  - The change is roughly 3 dB, loudest at the top of the volume range, plus a
-    working High Gain switch. It is a clear step, not a doubling of loudness.
-  - Turn the volume down before testing, then raise it gradually.
-  - A firmware update may undo it. Disabling the Sony updater first is
-    recommended:
-        adb shell pm disable-user --user 0 com.sony.walkman.systemupdater
-  - The change is reversible: menu option 3, then reboot.
-  - Nothing here is Sony software, and no Sony firmware or binaries are
-    included. The tool reads what it needs from your own player.
+   Step 2 - Prepare the player
+   ---------------------------
+   On the Walkman:
 
-More detail, the technical writeup and the FAQ:
-  https://github.com/maniac79/wm1am2-eu-volume-unlock
+     1. Settings > About device > tap "Build number" seven times
+        (this unlocks Developer options)
+     2. Settings > System > Developer options > enable "USB debugging"
+     3. Connect the USB cable to the computer
+     4. A prompt appears on the player: "Allow USB debugging?"
+        Tick "Always allow from this computer" and tap OK.
+
+   If the prompt never appears, unplug and replug the cable. It can take a few
+   seconds; sometimes you need to change the USB mode on the player.
+
+
+   Step 3 - Run the tool
+   ---------------------
+     macOS    double-click  START-macos.command
+     Windows  double-click  START-windows.bat
+     Linux    run           ./START-linux.sh
+
+   The menu is the same on every platform - all three can read, apply, restore
+   and reboot:
+
+     1) Status               read-only, no privilege, changes nothing
+     2) Full NVP read        privileged read + verified backup
+     3) Apply the change     back up first, then write
+     4) Restore from backup  per-field restore, verified
+     5) Reboot the player
+     6) Requirements / where is adb
+     0) Exit
+
+   Suggested order for a first run:
+
+     1. Option 1 - look at the current state. Writes nothing.
+     2. Option 2 - take a verified backup. Do this BEFORE option 3, so that a
+        baseline exists that was recorded while the player was still stock.
+     3. Option 3 - apply. It confirms first, writes the eight fields, then
+        offers a reboot.
+
+   Option 4 restores from a backup, not from a factory image. It uses the newest
+   verified ORIGINAL (baseline) backup for this device, refuses corrupt, foreign
+   or modified-state backups, and rewrites one field at a time, verifying each.
+
+   The helper app does not have to be installed beforehand - the menu offers to
+   install it from nvptool.apk when needed.
+
+   Read the exit code when something goes wrong. 0 is the only success:
+     7  the NVRAM operation finished but the temporary setting could not be put
+        back - recovery-required, NOT a clean success
+     20 no usable baseline backup for this device
+     4  no completion record: the outcome is UNKNOWN, not "unchanged"
+
+   The full table is in the README.
+
+
+   Step 4 - Reboot and check
+   -------------------------
+   The new volume table is only loaded while the player boots, so a reboot is
+   required. The menu offers it after a successful apply.
+
+   To confirm afterwards, use option 1 and look for:
+
+       ro.safe_volume.enabled = 00000000     fix is active
+       ro.safe_volume.enabled = 01000000     factory setting (still capped)
+
+   Or from a terminal:   adb shell getprop vendor.safe_volume.enabled
+
+
+   Good to know
+   ------------
+     - Turn the volume down before testing, then raise it gradually.
+     - A firmware update may undo or alter the result, and this is untested. Do
+       not simply re-run apply on an unknown firmware: confirm the firmware
+       fingerprint first (option 1 fails closed on an unsupported build).
+       Disabling the Sony updater first is recommended:
+           adb shell pm disable-user --user 0 com.sony.walkman.systemupdater
+     - Option 4 undoes the change only if you have a baseline backup taken
+       before the first write, followed by a reboot.
+     - Nothing here is Sony software, and no Sony firmware or binaries are
+       included. The tool reads what it needs from your own player.
+
+
+   ADVANCED - reference-profile restore
+   ------------------------------------
+   The menu hides one extra command, typed instead of chosen:  restore-ref
+
+   It writes a reference profile that was recorded from ONE unit. This is NOT
+   your player's backup and cannot be: it exists exactly for players that have
+   no baseline left, including units modified by an earlier release. It asks for
+   explicit confirmation, writes all eight fields, verifies them and tells you
+   to reboot. Use it only when option 4 cannot help.
+
+   It is not a factory restore. It writes the values measured on a supported
+   reference unit, so the result is "that unit's calibration", not "Sony's EU
+   calibration for your unit".
+
+
+   More detail, the technical writeup and the FAQ:
+     https://github.com/maniac79/wm1am2-eu-volume-unlock

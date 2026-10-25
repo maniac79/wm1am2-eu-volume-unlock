@@ -9,7 +9,48 @@ safety defects.
 
 ---
 
-## 0.2.0 — current, experimental pre-release
+## Unreleased — 0.2.1 (fixes only, not yet released)
+
+Audit findings fixed after the 0.2.0 tag. No change to the unlock mechanism
+itself: every code change tightens failure handling, and the rest is
+documentation.
+
+- **`restore-reference` reported success after a failed cleanup.** A leftover
+  `hidden_api_blacklist_exemptions` payload could be paired with "reference
+  profile restored (8/8 verified)" and a reboot suggestion. It now exits 7 with
+  an explicit recovery-required message and no success claim.
+- **`apply` continued into the write phase after an unclean backup read.** A
+  failed cleanup in the read phase is now fatal *before* any write (exit 7), and
+  the message states that nothing was written.
+- **`restore` kept writing fields after an unclean field.** Restore now stops
+  between fields, reporting which fields were written and how many were not.
+- **The Windows menu swallowed the orchestrator's output.** `Run-Action` was
+  called as `[void](Run-Action ...)`, which discarded the child process's stdout
+  along with the return value: choosing *Status* printed a header and nothing
+  else, and error messages from `nvptool.ps1` never reached the user. The
+  launcher → menu → orchestrator test found it; `Run-Action` now routes the
+  child's output to the host.
+- **Windows PowerShell 5.1 is tested explicitly**, including the shipped
+  `START-windows.bat` → menu → orchestrator path. The harness no longer
+  silently substitutes `pwsh`, and `menu.ps1` now uses the host that runs it
+  instead of a hard-coded `powershell`.
+- **APK signing identity is pinned and checked at build time**;
+  `docs/SIGNING.md` records the certificate fingerprint shared by 0.1.0, 1.1.0
+  and 0.2.0, and the rule for any future rotation.
+- **`QUICKSTART.txt` rewritten** against the real menu. It had called Windows
+  read-only, labelled option 3 a restore, described the discontinued
+  factory-restore workflow and quoted an unmeasured ~3 dB figure.
+- **README corrections**: removed the deleted `Rollback.java` reference and the
+  "Run Rollback" FAQ answer, stopped recommending a blind re-`apply` after an
+  unknown firmware update, separated "unknown outcome" from "safe retry",
+  clarified that the escalation is temporary while the helper APK and the NVRAM
+  values persist, and qualified the battery/third-party claims.
+- **New check**: `tests/docs/check_docs.sh` fails when the menus, `QUICKSTART`,
+  `README` or the version metadata drift apart.
+
+---
+
+## 0.2.0 — experimental pre-release
 
 Source commit: the `v0.2.0` tag. Replaces the withdrawn 0.1.0 preview.
 

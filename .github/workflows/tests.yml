@@ -6,17 +6,65 @@ on:
   workflow_dispatch:
 
 jobs:
-  windows:
-    name: Windows (simulated adb, no device)
+  # The shipped launcher (START-windows.bat) starts powershell.exe, which on
+  # Windows is Windows PowerShell 5.1. Testing only under pwsh would leave that
+  # path unverified, so both hosts are exercised explicitly. Neither job is
+  # physical-device validation: the adb is simulated.
+  windows-powershell51:
+    name: Windows / Windows PowerShell 5.1 (simulated adb, no device)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: PowerShell version
-        shell: pwsh
-        run: $PSVersionTable.PSVersion.ToString()
+      - name: Host version
+        shell: powershell
+        run: |
+          $PSVersionTable.PSVersion.ToString()
+          $PSVersionTable.PSEdition
 
-      - name: Parse all PowerShell scripts
+      - name: Parse all PowerShell scripts (5.1 parser)
+        shell: powershell
+        run: |
+          $files = @(
+            'tools/nvptool.ps1',
+            'tools/inject.ps1',
+            'packaging/windows/menu.ps1',
+            'tests/host/fakebin-ps/fake-adb.ps1',
+            'tests/windows/run_tests.ps1'
+          )
+          $bad = $false
+          foreach ($f in $files) {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $PWD $f), [ref]$null, [ref]$errs)
+            if ($errs) {
+              foreach ($e in $errs) { Write-Host "::error file=$f::$($e.Message)" }
+              $bad = $true
+            }
+          }
+          if ($bad) { exit 1 }
+          Write-Host 'All PowerShell scripts parse under 5.1.'
+
+      # Includes the launcher -> menu -> orchestrator path, which is why this
+      # job exists at all.
+      - name: Orchestration tests under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          ./tests/windows/run_tests.ps1 -PowerShellHost powershell
+
+  windows-pwsh:
+    name: Windows / PowerShell 7+ (simulated adb, no device)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host version
+        shell: pwsh
+        run: |
+          $PSVersionTable.PSVersion.ToString()
+          $PSVersionTable.PSEdition
+
+      - name: Parse all PowerShell scripts (7 parser)
         shell: pwsh
         run: |
           $files = @(
@@ -39,10 +87,10 @@ jobs:
           if ($bad) { exit 1 }
           Write-Host 'All PowerShell scripts parse.'
 
-      # Simulated adb only. This is NOT physical-device validation.
-      - name: Windows orchestration tests (simulated adb)
+      - name: Orchestration tests under PowerShell 7
         shell: pwsh
-        run: ./tests/windows/run_tests.ps1
+        run: |
+          ./tests/windows/run_tests.ps1 -PowerShellHost pwsh
 
   linux-bash:
     name: Linux (bash suites, simulated adb, no device)
@@ -60,3 +108,6 @@ jobs:
 
       - name: Bash host tests (fake adb)
         run: ./tests/host/run_shell_tests.sh
+
+      - name: Documentation consistency (menus vs QUICKSTART vs README vs code)
+        run: ./tests/docs/check_docs.sh
