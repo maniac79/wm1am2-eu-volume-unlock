@@ -13,6 +13,15 @@ that an asset was published or that physical hardware was tested.
 
 ## 0.2.4 — current, experimental pre-release
 
+Hardware verification of this build (one unit, firmware 1.09.00, packaged macOS
+archive): `restore-reference` returned the cap (`safe_volume 01000000` after
+reboot), `apply` wrote all eight fields (`wrote 8`, exit 0) and after reboot the
+cap was off (`00000000`), with the pre-write state recorded as a `baseline`
+backup. `restore` from a backup file was **not** run on hardware; Linux and
+Windows were **not** run on a Walkman. Suites: Java 42/42, bash 131/131,
+PowerShell 94/94, docs 33/33; CI jobs (Linux, Windows PowerShell 5.1, Windows
+PowerShell 7, packaged macOS archive) green at the release commit.
+
 Source commit: the `v0.2.4` tag. `versionName=0.2.4`, `versionCode=7`; same
 dedicated signing certificate as 0.2.2 and 0.2.3. The unlock mechanism is
 unchanged. What changed: NVRAM writes are enabled again under the documented
