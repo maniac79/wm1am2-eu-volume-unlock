@@ -17,9 +17,14 @@
 
    Further privileged steps DO still work in the same boot (measured), but they
    keep the player's apps broken, so reboot as soon as you are done. Restoring
-   eight fields takes about 40 seconds; if a run is interrupted, remove the
-   leftover lock the tool names and start again. The tool prints the reboot
-   reminder after every privileged step.
+   eight fields takes about 40 seconds. If a run is interrupted: DO NOT delete
+   the lock, the recovery record or the backup, and DO NOT simply start again.
+   Keep all three, establish whether the operation completed (one read, then
+   compare the eight values with the backup) or left a partial or unknown state,
+   and follow the recovery section of the README before any further write. The
+   lock name the tool prints is information for that assessment, not an
+   instruction to delete it. The tool prints the reboot reminder after every
+   privileged step.
    Details: docs/ZYGOTE-SINGLE-EXECUTION.md in the repository.
 
    The project author reports a successful ORIGINAL MANUAL change on one
@@ -54,9 +59,10 @@
    to the value printed OUTSIDE the ZIP in that release's notes. The internal
    SHA256SUMS.txt checks package contents but cannot establish publisher origin
    by itself. Check SOURCE-COMMIT.txt and the APK signer described in the
-   repository's docs/SIGNING.md. If 0.2.3 Assets are not yet shown on the
-   release page, wait for a package; do not substitute a source archive. The
-   older v0.2.2 release remains available with known review findings.
+   repository's docs/SIGNING.md. If the 0.2.6 Assets are not shown on the
+   release page, wait for a package; do not substitute a source archive. Older
+   releases, including v0.2.2, have had their binaries withdrawn - only the
+   current release is downloadable.
 
    STEP 2 - Get adb and prepare the Walkman
    ---------------------------------------

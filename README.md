@@ -47,8 +47,9 @@ What was actually run, and where:
 | `read` (privileged, duplicate-aware) | **run on hardware**, 0.2.4 packaged macOS archive |
 | `apply` (real NVRAM write, 8/8) | **run on hardware** — `apply OK - 8/8 verified (wrote 8)` |
 | `restore-reference` (real NVRAM write) | **run on hardware** — `8/8 verified`, cap returned after reboot |
-| Automatic backup | **exercised on hardware**: the `apply` run above wrote and verified a `baseline` backup on the device |
-| `restore` from a backup file | **NOT tested on hardware** (only the reference restore was) |
+| Automatic backup | **exercised on hardware**: the `apply` run wrote and verified a `baseline` backup. Backups are written **on the host computer** (`~/.nvptool/backups/<serial>/`), never on the player |
+| `restore` from a backup file | **run on hardware** in the 0.2.5 pass: the device's own `baseline` backup was restored field by field and the cap returned (`01000000`). This is the eight-write restore; it is a different test from the 0.2.6 no-op apply below |
+| `apply` on an already-patched player | **run on hardware** in the 0.2.6 pass: `wrote 0`, because the eight values were already at target — this exercises the path but is *not* an eight-write test |
 | Linux tool | **not tested on hardware** — simulated adb only |
 | Windows tool | **not tested on hardware** — simulated adb only, under PowerShell 5.1 and 7 in CI |
 | Interruption handling | mock-tested only — do not unplug USB mid-write |
@@ -257,17 +258,16 @@ one property or from a reset alone.
 
 ### Download and inspect the package
 
-For version 0.2.3, use the named **Assets** on the
-[v0.2.5 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.6)
-when they are available: `wm1am2-nvptool-macos-0.2.6.zip`,
-`wm1am2-nvptool-windows-0.2.6.zip` or
-`wm1am2-nvptool-linux-0.2.6.zip`. If those Assets are not shown, wait for the
-release package; GitHub's automatically generated “Source code” archives are
-not ready-to-run packages and contain no built helper APK. The older
-[v0.2.2 release](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.2)
-remains available with the known issues described in [CHANGELOG.md](CHANGELOG.md).
-The 0.1.0, 0.2.0 and 0.2.1 binaries were withdrawn; their Git tags remain for
-traceability.
+For version 0.2.6, use the named **Assets** on the
+[v0.2.6 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.6):
+`wm1am2-nvptool-macos-0.2.6.zip`, `wm1am2-nvptool-windows-0.2.6.zip` or
+`wm1am2-nvptool-linux-0.2.6.zip`. GitHub's automatically generated “Source
+code” archives are not ready-to-run packages and contain no built helper APK.
+
+Exactly one release is downloadable at a time. The 0.2.5 and earlier binaries -
+including the 0.2.2 pre-release that was previously kept alongside - have been
+withdrawn; their Git tags remain for traceability. Do not follow links to those
+releases expecting assets.
 
 For a published package, compare the ZIP's SHA-256 with the hash **outside**
 the ZIP in that release's notes. `SHA256SUMS.txt` checks files *inside* a ZIP
@@ -537,9 +537,9 @@ else is read from the device at runtime.
 ## Provenance
 
 The original manual method and its readback were reported successful by the
-project author on their unit. That observation does not validate the current
-0.2.3 host wrappers, automatic backup, packaged installers or restoration on
-physical hardware. Code and prose were developed with AI assistance and
+project author on their unit. That observation did not by itself validate the
+host wrappers or packaged installers; see *Testing & Validation Status* for what
+the later hardware passes actually exercised, and for what remains untested. Code and prose were developed with AI assistance and
 reviewed with offline tests; hardware acceptance remains separate.
 
 ---
