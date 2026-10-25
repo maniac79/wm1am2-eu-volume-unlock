@@ -1,300 +1,120 @@
-# WM1AM2 EU volume cap: NVRAM configuration change (experimental)
+# Sony NW-WM1AM2 EU volume cap tool (experimental)
 
-> ## ⚠️ EXPERIMENTAL — USE ENTIRELY AT YOUR OWN RISK
+> ## ⚠️ USE ENTIRELY AT YOUR OWN RISK
 >
-> This tool **writes persistent NVRAM** on a real, expensive device, using a
-> temporary privilege escalation and an undocumented vendor HAL. It can leave your
-> player **unbootable, unstable, or with broken audio**, and recovery may require
+> This tool writes **persistent NVRAM** on an expensive player through a temporary
+> privilege escalation and an undocumented vendor interface. It can leave the
+> player unbootable, unstable, or with broken audio. Recovery may require Sony
 > service tools that are not publicly available.
 >
-> **The author accepts no responsibility or liability** for any damage, data loss,
-> bricking, voided warranty, or other harm caused by using, misusing, or building
-> this software. There is **no warranty of any kind**. If you are not prepared to
-> lose the device, do not run it.
->
-> **Provenance:** coded with **Cline** driving **DeepSeek v4.1 Flash 1017 (high
-> reasoning)**, with additional independent code reviews performed by **ChatGPT**.
-> Every release is built from a tagged commit with published checksums, and the
-> validation limits are stated in [Testing & Validation Status](#testing--validation-status).
+> **The author accepts no responsibility or liability** for damage, data loss,
+> bricking, voided warranty, or other harm from using, misusing, or building this
+> software. There is **no warranty of any kind**. If you are not prepared to lose
+> the device, do not run it.
 
-Repair and interoperability tool for a Sony NW-WM1AM2 that I own.
+This is a repair and interoperability tool for an EU Sony NW-WM1AM2 owned by the
+project author. It changes eight audio configuration fields so the firmware
+selects its non-EU volume table and shows the High Gain control. The audible
+effect of High Gain and the size of any volume increase have not been measured.
+It requires neither root nor a bootloader unlock and does not modify firmware or
+include Sony binaries. It **does** use CVE-2024-31317 to obtain temporary access
+to the vendor HAL; that is a real exploit with real device risk.
 
-My player was sold in the EU, where the regional firmware applies a lower
-output-volume ceiling than the same hardware sold elsewhere. This tool restores
-the non-EU output-volume configuration by setting the factory NVRAM field that
-the boot process uses to choose the volume table. It also makes the
-**High Gain** toggle appear in Settings, which the EU configuration suppresses —
-whether that toggle then becomes audible is unproven (see the FAQ).
+**Supported profile:** `NW-WM1AM2`, Android 11, Sony firmware `1.09.00`, exact
+build fingerprint `SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys`.
+Privileged operations reject other models and fingerprints. No second unit,
+other Walkman model, or other firmware has been confirmed compatible. Menu
+option 1 (`status`) displays three properties; it does **not** prove that the
+device is compatible.
 
-No root, no bootloader unlock, no firmware modification, no Sony binaries.
+**Essential procedure: one privileged CLI command per boot, then reboot.**
+`read`, `apply`, `restore`, and `restore-reference` are privileged commands. An
+optional separate `read` must be followed by a **reboot before `apply`**. `apply`
+already creates and verifies its own backup before writing, so a separate
+`read` is not required. Reboot after every privileged command, including a
+successful read, before using the player's apps. See
+[Procedure](#procedure-and-backup-meaning).
 
-Scope: the original manual method was reported successful on one NW-WM1AM2,
-firmware `1.09.00`. The packaged host tools are not yet hardware-tested.
-Privileged commands refuse other models and build fingerprints; `status` only
-displays properties and is not a compatibility check.
+## Evidence and validation
 
----
+The author reported success with the original manual method on one physical
+NW-WM1AM2 running firmware `1.09.00`. Subsequent **packaged macOS** passes on
+that same unit provide the following narrower evidence:
 
-## Testing & Validation Status
-
-**Experimental. Read this before using anything here.**
-
-What was actually run, and where:
-
-| Item | Status |
+| Pass | Hardware observation |
 |---|---|
-| Original unlock method | tested by the author on their NW-WM1AM2 (manual) |
-| `read` (privileged, duplicate-aware) | **run on hardware**, 0.2.4 packaged macOS archive |
-| `apply` (real NVRAM write, 8/8) | **run on hardware** — `apply OK - 8/8 verified (wrote 8)` |
-| `restore-reference` (real NVRAM write) | **run on hardware** — `8/8 verified`, cap returned after reboot |
-| Automatic backup | **exercised on hardware**: the `apply` run wrote and verified a `baseline` backup. Backups are written **on the host computer** (`~/.nvptool/backups/<serial>/`), never on the player |
-| `restore` from a backup file | **run on hardware** in the 0.2.5 pass: the device's own `baseline` backup was restored field by field and the cap returned (`01000000`). This is the eight-write restore; it is a different test from the 0.2.6 no-op apply below |
-| `apply` on an already-patched player | **run on hardware** in the 0.2.6 pass: `wrote 0`, because the eight values were already at target — this exercises the path but is *not* an eight-write test |
-| Linux tool | **not tested on hardware** — simulated adb only |
-| Windows tool | **not tested on hardware** — simulated adb only, under PowerShell 5.1 and 7 in CI |
-| Interruption handling | mock-tested only — do not unplug USB mid-write |
+| 0.2.4 | Privileged `read`; `apply` wrote and verified 8/8 fields and made a verified host backup; `restore-reference` wrote and verified 8/8 fields, with the EU cap returning after reboot. |
+| 0.2.5-era re-test | `restore` from that unit's own `baseline` backup restored eight fields; the cap returned after reboot (`01000000`). The re-test used the packaged 0.2.4 macOS archive. |
+| 0.2.6 | `apply` on an already changed player verified 8/8 values and wrote 0 fields. This tested the no-write path, not another eight-write apply. |
 
-**0.2.7 is a host-validation release: no hardware run was performed for it.**
-The rows above describe the 0.2.4-0.2.6 passes; none of them exercised the
-0.2.7 validation code.
+Those historical passes support the listed hardware behavior on **one unit**.
+They do not turn the built-in reference profile into a universal factory image.
+`baseline` means the eight values match the reference observed on one EU unit;
+it does not prove the historical original values of any particular player.
 
-**What "tested" means here:** one physical unit, the author's, firmware `1.09.00`.
-A single unit is not a compatibility statement.
+Version **0.2.7** has current **offline host validation**, with no new physical
+device run claimed. At source commit `5c93f99`, [CI run 40211579731](https://github.com/maniac79/wm1am2-eu-volume-unlock/actions/runs/40211579731)
+passed the Linux/Bash, Windows PowerShell 5.1, Windows PowerShell 7, and packaged
+macOS jobs. Its logs report **42/42 Java mock-HAL**, **166/166 Bash fake-adb**,
+**123/123 Windows PowerShell 5.1**, **123/123 Windows PowerShell 7**, and
+**34/34 documentation** checks. A separate local PowerShell 7.6.8 review on
+macOS reported **121/121**; the Windows CI jobs include two additional BAT
+checks. These tests cover identity
+and backup guards, result validation, cleanup handling, and host/package behavior
+under simulation. They cannot establish real USB, driver, adb, Zygote, HAL,
+firmware, or acoustic behavior on another device.
 
-**Automated tests are not device validation.** They run against a simulated `adb`
-and a mock device; they cannot exercise USB behaviour, adb versions, driver
-quirks, real HAL timing or firmware differences. Current results:
-
-| Suite | Result |
-|---|---|
-| Java payload (mock HAL) | 42/42 |
-| Bash host (fake adb) | 131/131 |
-| PowerShell host (simulated adb) | 94/94 |
-| Documentation consistency | 33/33 |
-
-CI runs four jobs on every push — Linux bash suites, Windows PowerShell 5.1,
-Windows PowerShell 7, and a job that exercises the **packaged macOS archive** —
-all green on the `v0.2.4` commit.
-
-**One privileged step per boot.** A single privileged request executes more than
-once on the device, which cannot be prevented on this firmware, and afterwards
-every new app process is replaced by the payload until the player is restarted.
-See [docs/ZYGOTE-SINGLE-EXECUTION.md](docs/ZYGOTE-SINGLE-EXECUTION.md) for the
-measurements and the procedure.
-
-**No other firmware versions or Walkman models have been confirmed compatible.**
-Only `1.09.00` on `NW-WM1AM2` is targeted, and everything else is refused.
-
-### Platform support matrix
-
-| Platform | Write path | Automated tests | Physical device |
-|---|---|---|---|
-| macOS | `nvptool.sh` (bash) | yes — simulated adb + packaged-archive CI job | **packaged 0.2.4: read, apply, restore-reference** |
-| Linux | `nvptool.sh` (bash) | yes — simulated adb | **not tested** |
-| Windows | `nvptool.ps1` (PowerShell) | yes — simulated adb, PS 5.1 and 7 in CI | **not tested** |
-
-Windows has full feature parity in the *code* (status, install, read, apply,
-restore, reference-restore, reboot) and its tests pass, but **feature parity in code is
-not evidence that it works on a Walkman.**
-
-### What the automated tests do establish
-
-Offline, with no hardware: the guards reject unknown models and firmware; a
-write cannot happen without a verified backup; FATAL/ABORT/INCOMPLETE/timeout/
-stale/malformed/duplicate results are never treated as success; a failed
-cleanup exits 7 instead of claiming success; backups are integrity-checked and
-bound to one device; corrupt or foreign backups are refused; known target values are classified as a snapshot; backups matching the built-in
-reference values are classified as `baseline` (a value match, not proof of
-historical factory provenance); and both language implementations produce
-byte-identical backup files and the same state digest.
-
-### What they do not establish
-
-That the payload runs at all on your firmware; that the temporary privilege
-step behaves the same on your adb version; that the volume change is audible;
-that interruption recovery works on real hardware; or that the value written is
-the one the boot loader ends up using.
-
----
-
-## Supported configuration and limitations
-
-* **One documented, tested configuration only:**
-
-  | | |
-  |---|---|
-  | Model | `NW-WM1AM2` |
-  | Android | 11 |
-  | Sony firmware | `1.09.00` |
-  | Build fingerprint | `SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys` |
-  | Regional property | `vendor.destination=03010000` (CEW / EU) |
-
-  Any other model, firmware or build is **rejected**, not assumed compatible.
-  Nothing here has been validated on a second unit.
-
-* **It uses temporary privilege escalation.** To reach the vendor HAL the tool
-  spawns a process in the `platform_app` SELinux domain via CVE-2024-31317, a
-  publicly documented Android zygote vulnerability. "No root and no bootloader
-  unlock required" does **not** mean "no exploit and no risk". The escalation
-  itself lasts only for the command, but two things outlive it: the helper app
-  (`org.maniac79.nvptool`) stays installed until you remove it with
-  `adb uninstall org.maniac79.nvptool`, and the NVRAM values stay changed until
-  you restore them.
-
-* **It changes persistent NVRAM.** Eight audio calibration fields are written to
-  factory NVRAM. They survive reboots. A partial or damaged write may not be restorable by this tool even with a
-  validated backup. The reference profile is not a universal recovery image;
-  Sony service may be required.
-
-* **Known limitations.** No atomicity across the eight writes (a failure can
-  leave a partial state, which the tool reports precisely); the Windows package
-  has never been run on hardware; recovery depends on the current field state as well as a verified backup for
-  *that* device; firmware updates are untested and may undo or alter the result.
-
-* **Verified so far** on the profile above: the device-side read/apply/restore
-  logic and the whole host layer are covered by host tests with a fake `adb` and
-  a mock HAL. What has **not** been verified is anything requiring hardware:
-  see [docs/MANUAL-TEST-PLAN.md](docs/MANUAL-TEST-PLAN.md).
-
----
-
-## What the EU limit actually is
-
-The ceiling is not in the audio app or the amplifier. It is a single NVRAM
-field that determines which calibrated volume table the DAC is loaded with at
-boot:
-
-```
-NVP  ro.safe_volume.enabled = 1
-  -> property vendor.safe_volume.enabled = 01000000
-  -> init: service load_volume_table /vendor/bin/load_volume_table ${vendor.safe_volume.enabled}
-  -> dacdat auto icx1298 0x400000 01000000
-  -> /vendor/usr/share/audio_dac/ov_1298_cew.tbl     (EU table)
-```
-
-Setting that field to `0` makes the same boot script load `ov_1298.tbl`, the
-table used by units sold outside the EU. Both tables ship in the firmware; the
-flag only selects between them.
-
-The second effect is the High Gain switch. On an EU unit the volume-table
-selectors for "gain high" and "gain normal" point at *the same* table, which is
-why the switch is normally inert:
-
-```
-ro.vendor.alc.voltbl_id.btl_high = kVolTblIcx1298CewHpBtl
-ro.vendor.alc.voltbl_id.btl_low  = kVolTblIcx1298CewHpBtl   <- identical
-```
-
-Non-EU firmware uses distinct `...HpBtlGainHigh` / `...HpBtlGainLow` tables.
-This tool points the selectors at those and sets `ro.app.highgain.mode = 1`,
-which brings back the setting in the Walkman UI.
-
-Full technical writeup, including the things that did *not* work:
-[docs/FINDINGS.md](docs/FINDINGS.md).
-
----
-
-## What it changes
-
-| NVP field | EU default | After |
+| Host | Offline coverage | Physical Walkman run |
 |---|---|---|
-| `ro.safe_volume.enabled` | `1` | `0` |
-| `ro.app.highgain.mode` | `0` | `1` |
-| `ro.vendor.alc.voltbl_id.se_high` | `kVolTblIcx1298CewHpSe` | `kVolTblIcx1298HpSeGainHigh` |
-| `ro.vendor.alc.voltbl_id.se_low` | `kVolTblIcx1298CewHpSe` | `kVolTblIcx1298HpSeGainLow` |
-| `ro.vendor.alc.voltbl_id.btl_high` | `kVolTblIcx1298CewHpBtl` | `kVolTblIcx1298HpBtlGainHigh` |
-| `ro.vendor.alc.voltbl_id.btl_low` | `kVolTblIcx1298CewHpBtl` | `kVolTblIcx1298HpBtlGainLow` |
-| `ro.volume.gain.se` | `0` | `1` |
-| `ro.volume.gain.btl` | `0` | `1` |
+| macOS | Bash host suite and packaged macOS CI job | The 0.2.4–0.2.6 passes above |
+| Linux | Bash host suite with fake adb | None reported |
+| Windows | PowerShell suite with simulated adb on PS 5.1 and 7 | None reported |
 
-Not touched: `ro.product.destination` (still `03010000`, CEW),
-`ro.user.destination`, `ro.safe_volume.default`, the `ro.vendor.eq.voltbl_id.*`
-selectors, and any identity field (serial number, model ID, product code).
-A `read` or `apply` records your unit's current eight values. Copy the backup
-and its `.sha256` file somewhere safe before a write. A backup made after an
-earlier modification records that modified state, not historical factory values.
-The built-in reference values were observed on one EU unit before modification;
-their relationship to a particular user's original values must be established
-from independent records.
+The project accepts the historical hardware evidence for the actions it
+actually covered; 0.2.7's host validation is described separately. For test
+boundaries and the vendor evidence, see [FINDINGS](docs/FINDINGS.md),
+[SECURITY](docs/SECURITY.md), and the [manual test plan](docs/MANUAL-TEST-PLAN.md).
 
----
+## Before you start
 
-## Requirements
+1. Get the **full matching 0.2.7 ZIP** for your computer from the named Assets
+   on the [v0.2.7 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.7):
+   `wm1am2-nvptool-macos-0.2.7.zip`,
+   `wm1am2-nvptool-windows-0.2.7.zip`, or
+   `wm1am2-nvptool-linux-0.2.7.zip`. GitHub's automatic “Source code” archives
+   have no built helper APK. A standalone APK cannot upgrade an older host
+   package: use its matching host scripts, receipt, and APK together. The full
+   0.2.7 ZIP is the recommended update path. Older binary assets were withdrawn;
+   their Git tags remain for traceability.
+2. Compare the ZIP's SHA-256 with the hash **outside the ZIP** in its release
+   notes. `SHA256SUMS.txt` checks the ZIP's contents but does not authenticate
+   the ZIP itself. `SOURCE-COMMIT.txt` records the source commit, APK hash, and
+   release eligibility; compare the APK's certificate with the pin in
+   [SIGNING](docs/SIGNING.md). The receipt supports provenance checks but does
+   not independently reproduce the APK byte for byte. Release APK 0.2.7 has
+   Android `versionCode=10` and the same pinned certificate SHA-256 as the
+   preceding release APKs:
+   `c21c663d2171dcbd8bdc47c5bb5b2103a0fbf7aa349d7e5aebb67123de42c992`.
+3. Install [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools)
+   for your computer. Put the extracted `platform-tools` folder beside the
+   starter or put `adb` on `PATH`; the adjacent executable takes priority. A
+   suitable Windows USB driver or Linux USB access rule may be needed. You need
+   no JDK, Python, or full Android SDK to use a release ZIP.
+4. On the player, enable Developer options (Settings → About device → tap
+   **Build number** seven times), enable **USB debugging**, connect a data USB
+   cable, and approve this computer's debugging prompt. `adb devices` must show
+   exactly one player marked `device`, not `unauthorized` or `offline`.
 
-* Sony NW-WM1AM2, Android 11, USB debugging enabled.
-* **`adb` (Android Platform Tools).** Not bundled — download the package for
-  your computer from https://developer.android.com/tools/releases/platform-tools
-  and place its `platform-tools` folder beside the starter, or put `adb` on
-  `PATH`. The tool prefers the adjacent executable. On Windows, a suitable USB
-  driver may be needed; on Linux, USB access rules may be needed. Check `adb
-  devices`: exactly one player must show `device`, not `unauthorized` or
-  `offline`. A data-capable USB cable and approval of the debugging prompt on
-  the player are required.
+After extraction, launch `START-macos.command` on macOS,
+`START-windows.bat` on Windows, or `./START-linux.sh` on Linux (`chmod +x` may
+be needed after extraction). macOS may prompt about a downloaded unsigned
+script; the Windows starter uses a local PowerShell execution-policy bypass.
+Inspect the package and published hash before opening it; the prompts do not
+authenticate the archive.
 
-Only if you build from source:
+## Menu and first run
 
-* JDK (`javac`, `keytool`), Python 3, Android SDK build-tools and a platform
-  `android.jar`. See [SIGNING.md](docs/SIGNING.md) for release versus local
-  signing. Building from source does not require the maintainer's private key
-  when explicit local mode is selected.
-
----
-
-## Firmware updates and factory reset
-
-A firmware update may change the boot script, calibration tables or NVRAM state.
-This tool accepts only the exact `1.09.00` fingerprint listed above; do not
-re-run `apply` on a new build. Firmware and app updates can also carry security
-fixes. The project does not automatically disable any updater, Play Store app
-or other package and makes no blanket recommendation to disable them.
-
-After an update or factory reset, use `status` only to observe properties, then
-check the exact build fingerprint separately. A privileged `read` requires the
-supported build and installed helper; compare all eight values with a preserved
-pre-change record. `vendor.safe_volume.enabled=01000000` alone does not prove
-that all original per-device calibration values are present. A reset's effect on
-these fields has not been tested. Do not infer that `apply` is appropriate from
-one property or from a reset alone.
-
----
-
-## Usage
-
-### Download and inspect the package
-
-For version 0.2.7, use the named **Assets** on the
-[v0.2.7 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.7):
-`wm1am2-nvptool-macos-0.2.7.zip`, `wm1am2-nvptool-windows-0.2.7.zip` or
-`wm1am2-nvptool-linux-0.2.7.zip`. GitHub's automatically generated “Source
-code” archives are not ready-to-run packages and contain no built helper APK.
-
-Exactly one release is downloadable at a time. The 0.2.5 and earlier binaries -
-including the 0.2.2 pre-release that was previously kept alongside - have been
-withdrawn; their Git tags remain for traceability. Do not follow links to those
-releases expecting assets.
-
-For a published package, compare the ZIP's SHA-256 with the hash **outside**
-the ZIP in that release's notes. `SHA256SUMS.txt` checks files *inside* a ZIP
-but cannot authenticate the ZIP by itself. `SOURCE-COMMIT.txt` records the
-source commit and APK hash. Compare the APK's signing certificate with
-[SIGNING.md](docs/SIGNING.md). The build receipt strengthens provenance but
-is not an independent byte-for-byte source reproduction.
-
-Extract the archive, place the matching Android `platform-tools` folder next
-to the starter if `adb` is not already on `PATH`, and connect exactly one
-USB-debugging-authorized NW-WM1AM2. Then open the platform starter:
-
-| OS | Starter |
-|---|---|
-| macOS | `START-macos.command` |
-| Windows | `START-windows.bat` |
-| Linux | `START-linux.sh` (`chmod +x` may be needed after extraction) |
-
-macOS may ask you to review a downloaded, unsigned script. Inspect the
-archive's source and published hash before choosing to open it. The Windows
-starter invokes local PowerShell with `ExecutionPolicy Bypass` for the
-unsigned script; inspect the package before running it. Neither prompt proves
-that the archive is trustworthy.
+The menu on all three platforms offers these exact choices:
 
 ```text
 1) Status               read-only, no privilege, changes nothing
@@ -307,267 +127,211 @@ that the archive is trustworthy.
 0) Exit
 ```
 
-Start with **1** to view `device`, `destination` and `safe_volume`. It reads
-system properties only and does not verify the firmware fingerprint. **7** is
-an explicit APK installation/update; it writes an app to the device but no
-NVRAM. It never uninstalls another app. If a different signing key is already
-installed, Android rejects the update; inspect that state before deciding
-whether to uninstall. `read` and `apply` do not install the helper implicitly:
-if it is absent, they stop and point to option 7.
+1. Choose **1** to view `device`, `destination`, and `safe_volume`. This is a
+   property-only view, with no helper installation or privilege. It does not
+   check the exact fingerprint or read all eight NVRAM fields.
+2. Choose **7** to explicitly install or update the bundled helper. This
+   installs an Android app but writes **no NVRAM**. `read` and `apply` do not
+   install it for you. Installation checks the supported device and the trusted
+   bundled APK. Android refuses an update signed with a different certificate;
+   the tool never uninstalls an existing helper automatically. Older debug-key
+   helpers cannot upgrade in place to the pinned release key. Review the
+   installed package and [SIGNING](docs/SIGNING.md) before any owner decision
+   about removing one; do not bypass an install failure with an adb downgrade.
+3. You may choose **2** to record all eight values before deciding whether to
+   write. This is a **privileged read**, not a harmless dry run. Save the printed
+   `.conf` and `.sha256` backup files together, then choose **5 to reboot**
+   before any later `apply`. The menu has no automatic reboot prompt after a
+   read. Alternatively, proceed straight to **3**: `apply` makes and verifies
+   the same backup before it starts its NVRAM writes.
+4. Choose **3** only after reviewing the risks and a recovery plan for this
+   device. It verifies the backup and writes up to eight fields with readback.
+   After a successful write the menu asks to reboot and defaults to **yes**.
+   The table is selected at boot, so check the result only after restarting.
 
-**2** is not a no-change dry run. It checks the supported fingerprint,
-compares the installed APK's pulled bytes with the trusted bundled APK,
-acquires a device-wide lock, briefly writes the global
-`hidden_api_blacklist_exemptions` setting, deletes it again and checks that it
-is absent, and saves the eight-field backup locally. It refuses to start if
-the setting already exists, even with a value of `null` or an empty value, or
-if its absence cannot be confirmed. It does not try to repair or delete an
-unknown pre-existing setting. Only **1** is the read-only check. **3**, **4**
-and advanced `restore-ref` write persistent NVRAM; **5** reboots.
+Option **4** restores from the latest verified `baseline`-labelled backup for
+that same device. It writes fields individually. Type `restore-ref` at the menu
+only for the **advanced** built-in reference-profile write, with its separate
+confirmation; it is not a per-device backup or automatic factory restore.
+Option **5** requests a reboot. Option **6** explains Platform Tools and USB
+debugging. See [Recovery](#failure-and-recovery) before restoring any uncertain
+or damaged state.
 
-A successful read prints the backup path under
-`~/.nvptool/backups/<adb-serial>/` (on Windows under the user's home
-`.nvptool\backups` directory). Keep that `.conf` and its `.sha256` file as an
-unchanged pair, preferably with a second private copy. Backups contain a
-serial, firmware fingerprint and raw NVRAM values; redact serials and never
-post full backups publicly. `kind=baseline` means the eight values exactly
-match the built-in one-unit reference profile, **not** that their historical
-origin on this device has been proven. `snapshot` matches the tool's target
-values; `foreign` is another pattern. All kinds can be saved. The default
-`restore` only selects a `baseline`-labelled backup and still checks current
-field values. An explicitly selected non-baseline backup requires
-`NVPTOOL_ALLOW_NON_BASELINE_RESTORE=1` and returns to that saved state, which
-may already have been modified. The backup format remains schema 1 and is
-compatible with the previous version, subject to device/firmware checks.
+### Command line equivalent
 
-`apply` first records and verifies the current eight values, then attempts
-the target writes with per-field readback. The Java payload also checks the
-current state and digest before writes. These checks do not make the eight
-writes atomic. On a damaged partial state, ordinary `restore` may refuse a
-field whose current bytes are outside its accepted states even with a valid
-backup; a verified backup is **not** a guaranteed recovery path. The advanced
-`restore-reference` writes values observed on one EU reference unit; it is
-not an automatic factory restore or a replacement for independently proven
-original values for your unit. Its relationship to the owner's historical
-values was not verified here.
+Run these from the extracted release ZIP directory. The menu and CLI use the
+same host implementation and guards. One privileged CLI command is followed by
+one reboot; the optional two-command sequence below has a reboot **between**
+`read` and `apply`.
 
-A successful NVRAM write requires a reboot before assessing the boot-selected
-volume table. Check `vendor.safe_volume.enabled`, the eight read-back values
-and audio function separately. Neither a property nor immediate HAL readback
-proves an acoustic level or all post-reboot behavior. Lower the volume before
-listening; the loudness change has not been measured in dB.
-
-### Failure and recovery
-
-| Exit | Meaning and first response |
-|---|---|
-| 0 | Operation completed; inspect its specific output. |
-| 3 | Read/backup phase incomplete; the NVRAM write phase did not begin. |
-| 4 | No trustworthy completion record; outcome unknown. Settle any lock as described under *After an interruption*, then read current state before any further write. |
-| 5 | Definite write failure; a partial state is possible. Preserve the printed backup and inspect each field. |
-| 7 | Cleanup or lock release failed; recovery required even if the operation result looked complete. Preserve the recovery record and device lock for inspection. |
-| 11 | Unsupported model, firmware or expected component/identity. |
-| 12 | Present/uncertain global setting or existing local/device lock; inspect the condition, do not remove an unknown value or lock blindly. |
-| 20 | Missing or invalid backup. |
-| 21 | Non-baseline restore needs an explicit file and explicit consent. |
-
-If cleanup cannot confirm absence of
-`hidden_api_blacklist_exemptions`, the tool does not automatically retry the
-restore; its protected local recovery record and the device-wide lock remain.
-A failed `restore` can have already written earlier fields. The tool reports
-that boundary; a subsequent write needs an assessed current state and recovery
-plan. Preserve the package's APK for future use, as well as your backups.
-
-**After an interruption, in this order.** The order is not cosmetic: while a
-lock is held the tool refuses a read, so a read cannot be the first step.
-
-1. **Preserve.** Do not delete the lock, the recovery record or the backup, and
-   start no further privileged step.
-2. **Inspect what is already there**, without privileged operations. The host
-   lock is `${TMPDIR:-/tmp}/nvptool.lock.<serial>/` and its `pid` file names the
-   owning host process; the device lock is `/data/local/tmp/nvptool.lock`. The
-   recovery record the tool printed is `recovery-<run>-<op>.state` in the backup
-   directory, holding serial, run, operation, the original setting state and the
-   remote lock path. Check whether the recorded host process still exists.
-3. **Establish the outcome from that evidence** - exit code, recorded phase,
-   whether cleanup was verified - not from a device read, which the lock blocks.
-4. **Decide about the lock deliberately.** The tool never clears a lock for you
-   and has no bypass. A live owner means wait for it or stop it; never take over
-   its run. Only when the owner is gone and the record shows the run cannot
-   continue may that one lock be removed, with the reason recorded. Never remove
-   a lock or setting you cannot explain.
-5. **Only then read once**, compare the eight values with the backup, and decide
-   between a restore, a re-run or no action.
-
-### The procedure: one privileged operation per boot, then reboot
-
-On this firmware a single privileged request executes more than once on the
-device and that cannot be prevented by the tool (measurements in
-[docs/ZYGOTE-SINGLE-EXECUTION.md](docs/ZYGOTE-SINGLE-EXECUTION.md)). In addition,
-after any privileged operation Android replaces every new app process with the
-tool's payload for the rest of that boot, so apps - Settings included - will not
-open until the player is restarted.
-
-That cost is part of the procedure, not a defect to work around:
-
-1. Run **one** privileged operation: `read`, **or** `apply`, **or** `restore`,
-   **or** `restore-reference`.
-2. **Reboot the player.** The menu asks after every write and defaults to **yes**;
-   on the command line the tool prints `Do it now: nvptool.sh reboot`. The volume
-   table is loaded at boot anyway, so `apply` needs the reboot regardless.
-3. Continue with `status` (free, never privileged) to confirm the result.
-
-| Action | Per boot | Cost |
+| Action | macOS / Linux Bash | Windows PowerShell |
 |---|---|---|
-| `status` | unlimited | none |
-| `read` | one | reboot afterwards |
-| `apply`, `restore`, `restore-reference` | one is enough; further ones work but keep apps broken | reboot afterwards |
+| Status | `./nvptool.sh status` | `.\nvptool.ps1 status` |
+| Install helper | `./nvptool.sh install` | `.\nvptool.ps1 install` |
+| Optional read and backup | `./nvptool.sh read` | `.\nvptool.ps1 read` |
+| Reboot after that read | `./nvptool.sh reboot` | `.\nvptool.ps1 reboot` |
+| Apply, including its own backup | `./nvptool.sh apply` | `.\nvptool.ps1 apply` |
+| Reboot after apply | `./nvptool.sh reboot` | `.\nvptool.ps1 reboot` |
+| Restore latest baseline-labelled backup | `./nvptool.sh restore` | `.\nvptool.ps1 restore` |
+| Restore a chosen backup | `./nvptool.sh restore "/path/to/backup.conf"` | `.\nvptool.ps1 restore "C:\path\to\backup.conf"` |
+| Advanced reference write | `./nvptool.sh restore-reference` | `.\nvptool.ps1 restore-reference` |
 
-Duplicate executions are accepted **only** when every execution succeeded: a read
-additionally must have written nothing and returned byte-identical values, and a
-write path must have every execution report `status=OK` (each one verifies its
-own read-back). Anything else is refused.
+Reboot after `restore` or `restore-reference` too. On Windows, run the commands
+in PowerShell; the Windows starter handles its own script policy. A separately
+launched PowerShell may need an appropriate process-scoped execution-policy
+invocation. For example, from the verified ZIP directory, run
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\nvptool.ps1 status`.
+The command output also prints its reboot command. The optional explicit-file
+restore of a `snapshot` or `foreign` backup additionally requires
+`NVPTOOL_ALLOW_NON_BASELINE_RESTORE=1`; it returns to those saved values, which
+may already be modified. Do not set that flag for the default restore.
 
-### From source
+## Procedure and backup meaning
 
-Building needs the JDK, Python 3, Android SDK build-tools and a platform
-`android.jar`. The normal maintainer build uses the dedicated pinned release
-certificate. Third-party builders must create/select their own key and
-explicitly set `NVPTOOL_SIGNING_MODE=local` (or `ci` for offline tests); the
-result has a different Android signing identity and cannot upgrade an
-installation signed by the project's release key. It is not eligible for an
-official release archive. Follow [SIGNING.md](docs/SIGNING.md). Do not run
-`./tools/init_signing_key.sh` on the maintainer's existing keystore.
+On the tested firmware, one privileged host request may execute more than once
+on the device. The tool checks duplicate execution results and refuses
+inconsistent or incomplete evidence. For the rest of that boot, new app
+processes can be replaced by the payload; Settings and other apps may not open.
+After **one privileged CLI command**, reboot before using apps or issuing
+another privileged command. `status`, `install`, and `reboot` are not privileged
+NVRAM operations. A successful `read` needs a manual menu reboot (option 5);
+successful writes get a menu reboot prompt defaulted to yes. A write's effect
+on the boot-selected table also needs a reboot. The observed Zygote behavior is
+documented in [ZYGOTE-SINGLE-EXECUTION](docs/ZYGOTE-SINGLE-EXECUTION.md).
 
-A clean official package must be built from the same source as its APK receipt;
-`make_release.sh` checks the receipt, Git state, package/version, certificate,
-source and build inputs before it creates archives. `--allow-dirty` and
-`--allow-test-key` are explicit local exceptions and do not make a package an
-official release. `out/SOURCE-COMMIT.txt` accompanies a source-built APK for
-host identity checks. A downloaded archive already includes its own flat
-`SOURCE-COMMIT.txt`. Building code from source is optional for archive users.
+Backups are saved on the **host**, under `~/.nvptool/backups/<adb-serial>/`
+(under the user's home `.nvptool\backups` directory on Windows), never on the
+player. Preserve the `.conf` and `.sha256` files as a pair and keep a second
+private copy. They contain serial, fingerprint, and raw NVRAM values. Redact
+serials and never publish full backups or private local paths.
 
----
+`kind=baseline` means an exact eight-value match with the built-in reference
+profile observed on one EU unit. `kind=snapshot` means a match with the tool's
+target state; `foreign` is another pattern. A backup taken after a previous
+change records that current state, **not** historical factory values. The
+schema-1 format remains compatible with previous versions, subject to its
+device and firmware identity checks. A verified backup is required before
+`apply` writes, but it cannot guarantee recovery from a partial or damaged
+NVRAM state. The eight writes are not atomic, and ordinary `restore` rejects
+unrecognized current field values. The reference profile is also not a
+universal recovery image.
 
-## Why the helper step is needed
+Before privileged work, the tool checks the exact model and fingerprint,
+installed helper APK bytes, and a device-wide lock. It temporarily uses the
+global `hidden_api_blacklist_exemptions` setting, then removes it and checks
+that it is absent. A present value, including literal `null` or empty, or an
+uncertain absence check is refused before mutation. Do not clear an unknown
+pre-existing setting to force a run. Readback of NVRAM or the status property
+does not prove acoustic loudness or all behavior after reboot. Start listening
+at low volume and raise it gradually; no dB increase is established.
 
-The NVRAM interface is a vendor HAL, `izm.android.properties::IProperties`, and
-it is reachable only from SELinux domains granted `hwservice_manager find` on
-`properties_hwservice`: `platform_app`, `priv_app`, `system_app`. A normally
-installed app runs as `untrusted_app` and is denied.
+## Failure and recovery
 
-The host CLI (`tools/nvptool.sh`, via `tools/lib.sh`) starts `app_process` as uid 1000 with
-`seinfo=platform:targetSdkVersion=29:complete`, putting it in the `platform_app`
-domain so it can talk to the HAL. It uses the publicly documented zygote
-command-line issue CVE-2024-31317 to do that; this is a thin wrapper, and the
-vendor-side Java stub is loaded from the APK already present on the device
-rather than bundled here. On a device where that issue is patched, this step
-will not work.
+| Exit | Meaning |
+|---|---|
+| `0` | Command completed; inspect its operation-specific result. |
+| `3` | Read or backup incomplete before the NVRAM write phase. |
+| `4` | No trustworthy completion record; data outcome **UNKNOWN**. |
+| `5` | Definite write failure; state may be **PARTIAL**. |
+| `7` | Cleanup or lock release failed; recovery is required even if a data step looked complete. |
+| `11` | Unsupported model, firmware, component, or identity. |
+| `12` | Present or uncertain global setting, or an existing local or device lock. |
+| `20` | Backup missing or invalid. |
+| `21` | Non-baseline restore needs an explicit file and consent flag. |
 
-The spawn may produce no completion record. Treat the data outcome as unknown,
-inspect the current eight values and cleanup/lock state, and do not blindly
-re-run a command after an interrupted or uncertain operation.
+For `UNKNOWN`, `PARTIAL`, or exit `7`, **do not automatically retry** a read,
+apply, or restore. Preserve the output, backup pair, recovery record, host lock,
+and device lock. Failed cleanup retains a protected local recovery record and
+device-wide lock; the tool does not silently retry cleanup. While the lock is
+retained, the tool refuses another privileged read, so inspect the record and
+lock owner without privileged operations first. On Bash, the host lock is
+`${TMPDIR:-/tmp}/nvptool.lock.<serial>/` with a `pid` file; the printed
+`recovery-<run>-<op>.state` file is in the backup directory. On Windows, the
+host lock is a file named `nvptool.lock.<serial>` under the system temp directory,
+and the backup directory contains `recovery-<operation-id>.txt`. Both hosts use
+the device lock `/data/local/tmp/nvptool.lock`. The recovery records identify
+the device and run and preserve the original setting state and remote lock path.
 
----
+Correlate the lock owner, recovery record, output, and operation phase. A live
+owner must finish or be deliberately stopped; never take over its run. Only
+after confirming that the owner is gone and the run cannot continue should you
+assess removing that specific lock and record the reason. Never remove an
+unexplained lock or setting. Then run **one** privileged read, reboot, compare all eight fields
+with the preserved backup, and decide on further action. A failed restore may
+already have changed earlier fields. A matching backup and readback do not
+guarantee rollback; damaged fields may be rejected and service may be needed.
+Keep the matching ZIP and APK with the backup for future recovery.
 
-## Repository layout
+## What changes, and what remains uncertain
 
-```
-src/org/maniac79/nvptool/Nvp.java       HAL client: get/set + read-back verify
-src/org/maniac79/nvptool/Profile.java   profile, field schema, guards
-tools/nvptool.ps1                       host CLI / orchestrator (Windows)
-tools/inject.ps1                        strict runner; refuses write classes
-src/org/maniac79/nvptool/Result.java    structured completion records
-src/org/maniac79/nvptool/Read.java      privileged read
-src/org/maniac79/nvptool/Apply.java     write the configuration
-src/org/maniac79/nvptool/RestoreField.java  per-field restore from backup
-src/org/maniac79/nvptool/RestoreReference.java  advanced reference profile
-src/AndroidManifest.xml                 no components, on purpose
-tools/build.sh                          build + sign the APK (bash)
-tools/lib.sh                            host helpers (device, lock, backup)
-tools/nvptool.sh                        host CLI / orchestrator
-packaging/macos/START-macos.command     double-click starter (macOS)
-packaging/linux/START-linux.sh          starter (Linux)
-packaging/windows/START-windows.bat     double-click starter (Windows)
-packaging/common/menu.sh                interactive menu (macOS/Linux)
-packaging/windows/menu.ps1              interactive menu (Windows)
-packaging/common/QUICKSTART.txt         plain-language instructions for users
-packaging/make_release.sh               builds dist/*.zip for a release
-docs/FINDINGS.md                        technical writeup and negative results
-docs/SECURITY.md                        analysis of the vendor HAL access model
-```
+The firmware reads `ro.safe_volume.enabled` at boot: the EU reference value
+`1` selects its shipped `ov_1298_cew.tbl` table; target `0` selects its shipped
+`ov_1298.tbl` table. The tool also selects the non-EU high and low gain tables
+for both outputs and enables the High Gain setting:
 
+| NVRAM field | One-unit EU reference | Target |
+|---|---|---|
+| `ro.safe_volume.enabled` | `1` | `0` |
+| `ro.app.highgain.mode` | `0` | `1` |
+| `ro.vendor.alc.voltbl_id.se_high` | `kVolTblIcx1298CewHpSe` | `kVolTblIcx1298HpSeGainHigh` |
+| `ro.vendor.alc.voltbl_id.se_low` | `kVolTblIcx1298CewHpSe` | `kVolTblIcx1298HpSeGainLow` |
+| `ro.vendor.alc.voltbl_id.btl_high` | `kVolTblIcx1298CewHpBtl` | `kVolTblIcx1298HpBtlGainHigh` |
+| `ro.vendor.alc.voltbl_id.btl_low` | `kVolTblIcx1298CewHpBtl` | `kVolTblIcx1298HpBtlGainLow` |
+| `ro.volume.gain.se` | `0` | `1` |
+| `ro.volume.gain.btl` | `0` | `1` |
 
----
-## FAQ
+It does not change destination or identity fields, `ro.safe_volume.default`,
+or the equalizer table selectors. `vendor.safe_volume.enabled=00000000` after
+reboot is a property observation, not a sound-level measurement or proof of all
+eight original values. The High Gain switch can appear while its audible
+effect remains unverified. [FINDINGS](docs/FINDINGS.md) documents the boot
+table path, raw observations, and approaches that did not work.
 
-**Will a firmware update or factory reset undo the change?** Unknown. Both may
-alter the NVRAM state or firmware table selection; recheck the exact supported
-build and all eight fields. The tool never automatically disables updaters.
-Do not re-run `apply` based on one property alone.
+A firmware update can change the boot script, shipped tables, exploit path, or
+NVRAM state. This tool refuses a different fingerprint; do not rerun `apply`
+on an updated build. A factory reset's effect on these fields is untested.
+After an update or reset, use `status` for property observation, verify the
+fingerprint separately, and compare all eight values against your own prior
+records only when a privileged read is appropriate. One property or a reset
+alone is no basis for applying again. Firmware and app updates may carry
+security fixes. The tool does not disable the Sony updater, Play Store, or
+other packages, and makes no blanket recommendation to disable them.
 
-**Do I need root or an unlocked bootloader?** No. The tool uses a temporary
-privileged spawn via CVE-2024-31317. If that path has been patched, it fails;
-there is no supported fallback for unknown firmware.
+## Source, signing, and provenance
 
-**Will this work on another Walkman?** No other model is supported by the
-current guards or profile.
+Archive users do not need to build anything. A source build needs JDK,
+Python 3, Android SDK build-tools, and `android.jar`. Maintainer release builds
+use the dedicated pinned signing key; contributors must explicitly use a
+separate local signing mode and key. A locally signed APK cannot upgrade the
+official release APK in place and is not eligible for an official release ZIP.
+The packaging process verifies the source, build receipt, APK identity, and
+package inputs before producing eligible archives. See [SIGNING](docs/SIGNING.md)
+for the precise commands and limits of those checks.
 
-**How much louder is it?** Unknown. The observed difference between the two
-shipped calibration tables is a byte difference, not a dB measurement. The
-High Gain toggle can appear; its audible effect has not been established.
+The original method and readback were reported by the project author on their
+own unit. Code and prose were developed with AI assistance: **Cline** driving
+**DeepSeek v4.1 Flash 1017 (high reasoning)**, with additional independent code
+reviews by **ChatGPT**. Offline test results and the historical hardware
+observations are separate kinds of evidence; neither proves compatibility
+with a different player.
 
-**Can I undo it?** A matching backup may allow a per-field restore, but the
-accepted current-state guard can reject a damaged field. The built-in
-reference profile is separate from your own historical values. A backup made
-from an already modified device returns to that modified state if explicitly
-selected. See *Failure and recovery* before starting a write.
+This repository contains no Sony firmware images, dumped APKs or shared
+libraries, calibration `.tbl` files, extracted keys, decompiled vendor source,
+or copied third-party prose. It contains first-party code, scripts, and prose,
+plus the field names and observed values needed to reproduce the result. The
+vendor interface is read from the device at runtime. Prior art includes the
+[Head-Fi WM1Z/WM1A M2 discussion](https://www.head-fi.org/threads/sony-nw-wm1z-m2-wm1a-m2.962054/page-863)
+of a distinct rooted destination-change route and
+[Tellementnomade's older Walkman service discussion](https://forum.tellementnomade.org/viewtopic.php?t=15978).
+Neither establishes that this package works on another device. The
+[Android June 2024 security bulletin](https://source.android.com/docs/security/bulletin/2024-06-01)
+lists CVE-2024-31317, but by itself does not establish the behavior of this
+Sony Android 11 build. See [SECURITY](docs/SECURITY.md) for that distinction.
 
-**What should I report if a command fails?** Open an issue with the tool
-version, computer OS/architecture, device firmware fingerprint, command,
-exit code and redacted output. Do not publish your ADB serial, backup contents,
-local paths or personal identifiers. A report is not hardware acceptance.
-
----
-
-## No third-party IP
-
-This repository contains no Sony or other third-party intellectual property: no
-firmware images, no dumped APKs or shared libraries, no `.tbl` calibration
-tables, no extracted keys, no decompiled vendor source, and no copied text from
-other sites. It contains only first-party source code, scripts and prose, plus
-the field names and observed values needed to reproduce the result. Everything
-else is read from the device at runtime.
-
----
-
-## Credits and prior art
-
-* A [Head-Fi WM1Z/WM1A M2 discussion](https://www.head-fi.org/threads/sony-nw-wm1z-m2-wm1a-m2.962054/page-863)
-  records a rooted destination-change recipe. It is distinct from this tool's
-  eight-field HAL route and is not evidence that this package works.
-* [Tellementnomade's Sony service discussion](https://forum.tellementnomade.org/viewtopic.php?t=15978)
-  documents destination and sound-pressure settings for older Walkmans. Its
-  scsitool instructions are not a method validated here for Android M2 models.
-* The [Android June 2024 security bulletin](https://source.android.com/docs/security/bulletin/2024-06-01)
-  lists CVE-2024-31317. Its listed updated AOSP versions are 12–14; the
-  bulletin by itself does not establish the behavior of this Sony Android 11
-  build. The project's device observation and host implementation are
-  documented separately in [FINDINGS.md](docs/FINDINGS.md).
-
----
-
-## Provenance
-
-The original manual method and its readback were reported successful by the
-project author on their unit. That observation did not by itself validate the
-host wrappers or packaged installers; see *Testing & Validation Status* for what
-the later hardware passes actually exercised, and for what remains untested. Code and prose were developed with AI assistance and
-reviewed with offline tests; hardware acceptance remains separate.
-
----
+For a failure report, include tool version, computer OS and architecture,
+firmware fingerprint, command, exit code, and redacted output. Do not publish
+ADB serials, backup contents, local paths, or personal identifiers.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-

@@ -47,10 +47,14 @@ adb uninstall org.maniac79.nvptool
 ```
 
 Uninstall removes the app, **not** the eight persistent NVRAM values or backup
-files on the host. It is not a rollback. An existing correctly signed 0.2.2
-helper can be upgraded in place to the current 0.2.7 release build by explicit menu
-option 7 or CLI `install`, provided a verified 0.2.7 package is available. Check
-the current GitHub Assets; a source checkout is not proof of publication.
+files on the host. It is not a rollback. An existing correctly signed
+0.2.2-or-later helper can be upgraded in place by explicit menu option 7 or CLI
+`install` from the matching versioned host package. The host scripts,
+`SOURCE-COMMIT.txt` and APK must come from the same release ZIP. A standalone APK
+is only compatible with host tools from its matching version: for example,
+installing a 0.2.7 APK does not upgrade a 0.2.6 host package, whose privileged
+operations still expect its bundled 0.2.6 APK. Check the current GitHub Assets;
+a source checkout is not proof of publication.
 
 ## Independent and CI builds
 

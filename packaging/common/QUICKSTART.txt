@@ -5,21 +5,22 @@
    -------------------------
    *** PROCEDURE: ONE PRIVILEGED STEP PER BOOT, THEN REBOOT ***
 
-   On this firmware one privileged request runs more than once on the device,
-   and afterwards Android replaces every new app process with the tool's payload
-   for the rest of that boot. Apps - Settings included - will not open until the
-   player is restarted. So the procedure is:
+   On this firmware, after a privileged request Android replaces every new app
+   process with the tool's payload for the rest of that boot. Apps - Settings
+   included - will not open until the player is restarted. Run one privileged
+   command per boot, then reboot before another:
 
      1. Run ONE privileged step: 2 (read) OR 3 (apply) OR 4 (restore).
-     2. Reboot. After every write the menu asks "Reboot now?" - press Enter to
-        accept. From a terminal the tool prints the exact reboot command.
+     2. Reboot. After a write, the menu asks "Reboot now?" and defaults to Yes.
+        From a terminal, the tool prints the reboot command/reminder; it does
+        not prompt.
      3. Use option 1 (status) to confirm; it is free and never privileged.
 
-   Further privileged steps DO still work in the same boot (measured), but they
-   keep the player's apps broken, so reboot as soon as you are done. Restoring
-   eight fields takes about 40 seconds. If a run is interrupted, in this order:
+   Apply makes its own backup, so you do not need to run a separate read first.
+   Reboot after a privileged read as well as after a write. Restoring eight
+   fields takes about 40 seconds. If a run is interrupted, in this order:
    (1) preserve the lock, the recovery record and the backup, and start nothing;
-   (2) inspect the record and the lock's recorded owner PID without privileged
+   (2) inspect the recovery record and lock owner evidence without privileged
    operations; (3) establish from that evidence whether the operation completed,
    aborted or is unknown - a read cannot come first, because the lock refuses it;
    (4) decide deliberately about the lock: the tool never clears it for you, a
@@ -30,12 +31,13 @@
    reboot reminder after every privileged step.
    Details: docs/ZYGOTE-SINGLE-EXECUTION.md in the repository.
 
-   The project author reports a successful ORIGINAL MANUAL change on one
-   NW-WM1AM2. The finished macOS tool WAS exercised on that unit: a
-   privileged read, a real reference-profile write (cap returned after reboot)
-   and a real apply (8/8 fields written, cap off after reboot). The Windows and
-   Linux tools have NOT been run on a Walkman, and restore-from-backup has not
-   been run on hardware either - only the reference restore has.
+   Historical hardware evidence on one NW-WM1AM2 running Android 11 and Sony
+   firmware 1.09.00: a v0.2.4 pass performed a privileged read, Apply (8/8
+   fields), and reference-profile restore; in a v0.2.5-era pass, the packaged
+   v0.2.4 macOS archive performed backup and restore from backup; a v0.2.6 pass
+   performed a no-op Apply. The same unit was used for these operations.
+   Version 0.2.7 adds offline host validation only. The Windows
+   and Linux tools have NOT been run on a Walkman.
    Automated tests use simulated adb and a mock HAL. They are not a Walkman test.
    One physical unit is not a compatibility statement.
    Only NW-WM1AM2, Android 11, Sony firmware 1.09.00 and fingerprint
@@ -56,9 +58,13 @@
 
    STEP 1 - Choose and check the download
    --------------------------------------
-   On a published GitHub Release page, choose the versioned ZIP under Assets
-   for YOUR computer: macOS, Windows or Linux. Do not choose GitHub's automatic
-   "Source code" ZIP: it does not include the built APK. Match the ZIP SHA-256
+   On a published GitHub Release page, choose the complete versioned ZIP under
+   Assets for YOUR computer: macOS, Windows or Linux. The host scripts,
+   SOURCE-COMMIT.txt and APK in the ZIP must belong to the same release version.
+   A standalone APK is only for host tools of its matching version; it is not a
+   drop-in upgrade for an older host package (including a 0.2.6 package). Do
+   not choose GitHub's automatic "Source code" ZIP: it does not include the
+   built APK. Match the ZIP SHA-256
    to the value printed OUTSIDE the ZIP in that release's notes. The internal
    SHA256SUMS.txt checks package contents but cannot establish publisher origin
    by itself. Check SOURCE-COMMIT.txt and the APK signer described in the
@@ -116,8 +122,9 @@
    an older helper. An Android signing-certificate mismatch stops the update;
    see docs/SIGNING.md before deciding whether to remove an old helper.
 
-   Choose 2 to read all eight NVRAM values and save a verified backup. This is
-   NOT a no-change dry run: it uses the privileged helper, a device lock, a
+   Choose 2 to read all eight NVRAM values and save a verified backup. If you
+   intend to apply, option 3 backs up first, so this separate read is optional.
+   This is NOT a no-change dry run: it uses the privileged helper, a device lock, a
    temporary global setting and a local backup file. The setting is deleted
    and checked absent after the operation. Any pre-existing value (including
    literal null or empty), or an uncertain setting check, makes the command
@@ -133,7 +140,7 @@
 
    STEP 5 - Writes and checks
    --------------------------
-   Choose 3 only after reviewing the eight values and a recovery path for this
+   Choose 3 only after reviewing the risks and a recovery plan for this
    exact player. Apply backs up first, then writes up to eight fields and reads
    each written value back. Choose 4 only with an appropriate validated backup;
    it writes fields individually. The advanced menu command `restore-ref`
