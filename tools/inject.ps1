@@ -1,114 +1,94 @@
-<#
-.SYNOPSIS
-    Start one of the nvptool classes in a platform_app context.
-
-.DESCRIPTION
-    Windows / PowerShell 5.1+. Needs only `adb` (no Python, no JDK).
-    See tools/inject.py for the full explanation of why this step exists.
-
-.EXAMPLE
-    .\tools\inject.ps1 org.maniac79.nvptool.Read
-
-.EXAMPLE
-    .\tools\inject.ps1 org.maniac79.nvptool.Apply
-
-.EXAMPLE
-    .\tools\inject.ps1 org.maniac79.nvptool.Rollback
-#>
+# inject.ps1 - start one nvptool class in a platform_app context (Windows).
+#
+# Strict by design:
+#   - binds to exactly one authorised device (or -Serial);
+#   - does not clear logcat;
+#   - preserves the previous hidden_api_blacklist_exemptions value;
+#   - exits non-zero unless a complete summary record for this run id is seen.
+#
+# It is a runner only. Backup/journal orchestration lives in the bash tool.
 param(
-    [Parameter(Mandatory = $true, Position = 0)][string]$ClassName,
+    [Parameter(Mandatory = $true)][string]$ClassName,
+    [Parameter(Mandatory = $true)][string]$RunId,
     [string]$Package = 'org.maniac79.nvptool',
+    [string]$Serial = '',
     [int]$RunUid = 1000,
     [string]$Seinfo = 'platform:targetSdkVersion=29:complete',
     [string]$Hal = '/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk',
-    [int]$WaitSeconds = 8
+    [int]$WaitSeconds = 20
 )
 
 $ErrorActionPreference = 'Stop'
 $Tag = 'NVPTOOL'
 $Remote = '/data/local/tmp/nvptool_payload.txt'
 
-# $env:TEMP does not exist on macOS/Linux PowerShell, so fall back properly.
-$tempDir = if ($env:TEMP) { $env:TEMP }
-           elseif ($env:TMPDIR) { $env:TMPDIR }
+$tempDir = if ($env:TEMP) { $env:TEMP } elseif ($env:TMPDIR) { $env:TMPDIR }
            else { [System.IO.Path]::GetTempPath() }
-$Local = Join-Path $tempDir 'nvptool_payload.txt'
+$Local = Join-Path $tempDir ("nvptool_payload_{0}.txt" -f $RunId)
 
-function Stop-Cleanup {
-    & adb shell 'settings delete global hidden_api_blacklist_exemptions' *> $null
-    & adb shell "rm -f $Remote" *> $null
-    Remove-Item -Force -ErrorAction SilentlyContinue $Local
-}
-
-# ---- preflight -------------------------------------------------------------
+# ---- device selection ------------------------------------------------------
 $state = (& adb get-state 2>$null | Out-String).Trim()
-if ($state -ne 'device') {
-    Write-Error "adb device not ready (state='$state')"
-    exit 1
+if ($state -ne 'device') { Write-Error "adb device not ready (state='$state')"; exit 1 }
+
+if ([string]::IsNullOrEmpty($Serial)) {
+    $list = @(& adb devices | Select-Object -Skip 1 | Where-Object { $_ -match "`tdevice$" } |
+              ForEach-Object { ($_ -split "`t")[0] } | Where-Object { $_ })
+    if ($list.Count -eq 0) { Write-Error 'no authorised adb device'; exit 1 }
+    if ($list.Count -gt 1) { Write-Error "more than one adb device attached ($($list -join ', ')); pass -Serial"; exit 1 }
+    $Serial = $list[0]
 }
-$model = (& adb shell 'getprop ro.product.model' | Out-String).Trim()
-Write-Host "device model: $model"
+function A { & adb -s $Serial @args }
 
-$rawApk = & adb shell "pm path $Package" 2>$null
-$apkPath = @(
-    ($rawApk -split "`n") |
-        ForEach-Object { $_.Trim() } |
-        Where-Object { $_ -like 'package:*' } |
-        ForEach-Object { $_.Substring(8) }
-) | Select-Object -First 1
+$model = (& adb -s $Serial shell getprop ro.product.model | Out-String).Trim()
+Write-Host "device: $model ($Serial)"
 
-if (-not $apkPath) {
-    Write-Error "package $Package is not installed - run: adb install -r out\nvptool.apk"
-    exit 1
-}
+$rawApk = & adb -s $Serial shell "pm path $Package" 2>$null
+$apkPath = @(($rawApk -split "`n") | ForEach-Object { $_.Trim() } |
+             Where-Object { $_ -like 'package:*' } | ForEach-Object { $_.Substring(8) }) |
+           Select-Object -First 1
+if (-not $apkPath) { Write-Error "package $Package not installed"; exit 1 }
 
-& adb shell "test -r $Hal" *> $null
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "cannot read HAL apk at $Hal"
-    exit 1
-}
-
-# ---- build the zygote payload ---------------------------------------------
-$cmdLine = 'CLASSPATH=' + $apkPath + ':' + $Hal + ' /system/bin/app_process /system/bin ' + $ClassName + ' #'
-
+# ---- payload ---------------------------------------------------------------
+$cmdLine = 'CLASSPATH=' + $apkPath + ':' + $Hal + ' /system/bin/app_process /system/bin ' + $ClassName + ' ' + $RunId + ' #'
 $zygoteArgs = @(
-    "--setuid=$RunUid",
-    "--setgid=$RunUid",
-    '--setgroups=3003',
-    '--runtime-args',
-    "--seinfo=$Seinfo",
-    '--runtime-flags=1',
-    '--nice-name=nvptool',
-    '--invoke-with',
-    $cmdLine
+    "--setuid=$RunUid", "--setgid=$RunUid", '--setgroups=3003', '--runtime-args',
+    "--seinfo=$Seinfo", '--runtime-flags=1', '--nice-name=nvptool', '--invoke-with', $cmdLine
 )
-
-# LF only, UTF-8 without BOM - the device shell must see plain line breaks.
 $payload = "LClass1;->method1(`n" + $zygoteArgs.Count + "`n" + ($zygoteArgs -join "`n")
 [System.IO.File]::WriteAllText($Local, $payload, (New-Object System.Text.UTF8Encoding($false)))
 
+# ---- previous setting state ------------------------------------------------
+$before = (& adb -s $Serial shell 'settings get global hidden_api_blacklist_exemptions' | Out-String).Trim()
+$touched = $false
+
 try {
-    & adb push $Local $Remote *> $null
-    & adb shell 'logcat -c' *> $null
-    & adb shell 'am force-stop com.android.settings' *> $null
-    & adb shell "settings put global hidden_api_blacklist_exemptions `"`$(cat $Remote)`"" *> $null
-    Start-Sleep -Seconds 1
-    & adb shell 'am start -a android.settings.SETTINGS' *> $null
-    Start-Sleep -Seconds $WaitSeconds
+    & adb -s $Serial push $Local $Remote *> $null
+    $touched = $true
+    & adb -s $Serial shell "settings put global hidden_api_blacklist_exemptions `"`$(cat $Remote)`"" *> $null
+    & adb -s $Serial shell 'am force-stop com.android.settings' *> $null
+    & adb -s $Serial shell 'am start -a android.settings.SETTINGS' *> $null
 
-    $out = & adb shell 'logcat -b all -d' 2>$null | Select-String -SimpleMatch $Tag
+    $lines = @()
+    for ($i = 0; $i -lt $WaitSeconds; $i++) {
+        Start-Sleep -Seconds 1
+        $lines = @(& adb -s $Serial shell "logcat -d -s $Tag`:V" 2>$null | Where-Object { $_ -match [regex]::Escape("run=$RunId ") })
+        if ($lines | Where-Object { $_ -match 'ev=summary' }) { break }
+    }
+    $lines | ForEach-Object { Write-Host $_ }
 
-    if ($out) {
-        $out | ForEach-Object { $_.Line }
-    }
-    else {
-        Write-Host "(no $Tag output - the spawn is flaky, just run the command again)"
-        $code = 2
-    }
+    $summaries = @($lines | Where-Object { $_ -match 'ev=summary' })
+    if ($summaries.Count -ne 1) { Write-Error "no single summary record (got $($summaries.Count)) - outcome unknown"; exit 4 }
+    if ($summaries[0] -notmatch 'status=OK') { Write-Error 'operation did not report OK'; exit 5 }
+    exit 0
 }
 finally {
-    Stop-Cleanup
+    & adb -s $Serial shell "rm -f $Remote" *> $null
+    if ($touched) {
+        if ($before -eq 'null') {
+            & adb -s $Serial shell 'settings delete global hidden_api_blacklist_exemptions' *> $null
+        } else {
+            & adb -s $Serial shell "settings put global hidden_api_blacklist_exemptions `"$before`"" *> $null
+        }
+    }
+    Remove-Item -Force -ErrorAction SilentlyContinue $Local
 }
-
-if ($code -eq 2) { exit 2 }
-exit 0

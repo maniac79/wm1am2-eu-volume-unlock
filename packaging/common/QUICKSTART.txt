@@ -1,6 +1,35 @@
 SONY NW-WM1AM2 - EU VOLUME CAP TOOL
 ===================================
 
+READ THIS FIRST - EXPERIMENTAL
+------------------------------
+  This is an experimental tool with exactly ONE tested configuration:
+
+      NW-WM1AM2, Android 11, Sony firmware 1.09.00
+      fingerprint SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys
+
+  Any other model or firmware is refused. It has never been run on a second
+  player.
+
+  It uses a temporary privilege escalation (CVE-2024-31317) to reach a vendor
+  HAL. "No root, no bootloader unlock" does NOT mean "no exploit, no risk".
+
+  It writes eight values into factory NVRAM. They persist across reboots. A
+  verified backup is taken automatically before every write, and the restore
+  path is per-field and checked - but if the backup is lost, recovery depends
+  on the built-in reference profile or on Sony service.
+
+  Windows: this package is READ-ONLY for now (status, full read, reboot).
+  Apply and restore are only available on macOS and Linux until the Windows
+  path has been validated.
+
+  Status vs. full read:
+    - "Status" uses plain getprop: no app, no privilege, no change.
+    - "Full NVP read" uses the privileged helper and briefly touches a
+      system setting (restored afterwards). It reads only, but it is NOT a
+      "changes nothing" operation.
+
+
 What this does
 --------------
 European WM1AM2 players ship with a lower output-volume ceiling than the same

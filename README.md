@@ -15,6 +15,44 @@ refuses to run on any other model.
 
 ---
 
+## Experimental status — read before using
+
+* **One documented, tested configuration only:**
+
+  | | |
+  |---|---|
+  | Model | `NW-WM1AM2` |
+  | Android | 11 |
+  | Sony firmware | `1.09.00` |
+  | Build fingerprint | `SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys` |
+  | Regional property | `vendor.destination=03010000` (CEW / EU) |
+
+  Any other model, firmware or build is **rejected**, not assumed compatible.
+  Nothing here has been validated on a second unit.
+
+* **It uses temporary privilege escalation.** To reach the vendor HAL the tool
+  spawns a process in the `platform_app` SELinux domain via CVE-2024-31317, a
+  publicly documented Android zygote vulnerability. "No root and no bootloader
+  unlock required" does **not** mean "no exploit and no risk" — it means the
+  escalation is temporary and nothing persistent is installed.
+
+* **It changes persistent NVRAM.** Eight audio calibration fields are written to
+  factory NVRAM. They survive reboots. A mis-write can leave the player in a
+  state that only a validated backup, the reference profile, or Sony service can
+  repair.
+
+* **Known limitations.** No atomicity across the eight writes (a failure can
+  leave a partial state, which the tool reports precisely); the Windows package
+  is read-only for now; recovery depends on having a verified backup for *that*
+  device; firmware updates are untested and may undo or alter the result.
+
+* **Verified so far** on the profile above: the device-side read/apply/restore
+  logic and the whole host layer are covered by host tests with a fake `adb` and
+  a mock HAL. What has **not** been verified is anything requiring hardware:
+  see [docs/MANUAL-TEST-PLAN.md](docs/MANUAL-TEST-PLAN.md).
+
+---
+
 ## What the EU limit actually is
 
 The ceiling is not in the audio app or the amplifier. It is a single NVRAM
@@ -84,7 +122,6 @@ The original values are in `Rollback.java`, so the change is reversible.
 Only if you build from source:
 
 * JDK (`javac`, `keytool`), Android SDK build-tools and a platform `android.jar`.
-* Python 3, for `tools/inject.py`.
 
 ---
 
@@ -92,7 +129,21 @@ Only if you build from source:
 
 Sony still ships firmware for some regions (an Asia-region release appeared in
 2026), so the on-device updater is live even though this is an Android 11
-device. **Disable it before a firmware update can land.**
+device.
+
+**This is a trade-off, not a blanket recommendation.** An update may replace the
+boot script or the volume tables this change relies on, and this tool has not
+been tested against any firmware other than `1.09.00` — so after an update,
+re-validate before assuming anything. On the other hand, firmware and app
+updates also carry security fixes; permanently disabling them leaves the device
+unpatched. Choose deliberately:
+
+* If you want to keep the current behaviour: disable the updater (below) and
+  re-check `vendor.safe_volume.enabled` periodically.
+* If you want to stay patched: leave updates enabled, and after any update run
+  `nvptool.sh status`, then `nvptool.sh read` and compare with your backup —
+  do **not** just re-run `apply` on an unknown firmware.
+
 
 Why: the EU limit is enforced by a boot script and a calibrated volume table
 that ship inside the firmware. An update can replace either of them, can change
@@ -142,12 +193,20 @@ Grab the archive for your OS from
 Extract, double-click the starter, and pick a menu option:
 
 ```
-1) Check status            read-only, changes nothing
-2) Enable the fix          writes NVRAM, then offers a reboot
-3) Restore factory setting undo everything
-4) Reboot the player
-5) Where is adb? / requirements
+1) Status               read-only, no privilege, changes nothing
+2) Full NVP read        privileged read + verified backup
+3) Apply the change     back up first, then write
+4) Restore from backup  per-field restore, verified
+5) Reboot the player
+6) Requirements / where is adb
 ```
+
+**Two different "checks" — don't confuse them.** *Status* reads three system
+properties with a plain `adb shell getprop`: no app installed, no privilege
+used, no setting touched, nothing written. *Full NVP read* goes through the
+privileged helper, temporarily changes `hidden_api_blacklist_exemptions` (and
+restores it afterwards), and writes a backup — it reads only, but it is **not**
+a "changes nothing" operation.
 
 You do **not** need a compiler, JDK or Android SDK for this route, and the menu
 installs the APK for you. All you need is `adb` — see *Requirements*.
@@ -158,47 +217,50 @@ used `adb` before.
 ### From source
 
 ```bash
-# 1. build + install the tool (one package, three entry points)
+# 1. build + install the tool (one package; version is checked at runtime)
 ./tools/build.sh
 adb install -r out/nvptool.apk
 
-# 2. read-only dump of every relevant NVRAM field, to see the starting state
-./tools/inject.sh org.maniac79.nvptool.Read
-
-# 3. write the new values; each one is verified by read-back
-./tools/inject.sh org.maniac79.nvptool.Apply
-
-# 4. reboot so init reloads the DAC volume table
+# 2. build the host CLI, then use it for everything
+#    (it binds one device, locks, keeps a backup and validates results)
+./tools/nvptool.sh status          # read-only, no privilege
+./tools/nvptool.sh read            # privileged read + verified backup
+./tools/nvptool.sh apply           # backup, then write
 adb reboot
-
-# 5. check the flag: 00000000 = EU clamp off, 01000000 = still on
-adb shell getprop vendor.safe_volume.enabled
+./tools/nvptool.sh status          # expect safe_volume 00000000
+./tools/nvptool.sh restore         # per-field restore from the backup
 ```
 
-`tools/inject.ps1` does the same on Windows, `tools/inject.py` on any OS with
-Python 3. All three emit identical payloads.
+`tools/nvptool.sh` is the supported entry point on macOS/Linux. On Windows the
+package is currently **read-only** (status, full read, reboot) while the
+PowerShell orchestration is unvalidated — see the notice in the archive.
 
 
 `Apply` prints how many of the eight fields were written and verified. Every
 write is read back and compared, so a silent rejection is not reported as
 success.
 
-Expect roughly 3 dB of additional headroom, concentrated in the upper volume
-range — the two tables differ by about that much, see section 6 of
-`docs/FINDINGS.md`. It is a correction, not a transformation, so use a
-moderate volume while confirming the change.
+The magnitude is **not** established. Comparing the two shipped volume tables
+byte-by-byte shows 3202 of 15738 bytes differ, which is consistent with a
+modest change weighted towards the top of the volume range — but a byte count is
+not an attenuation measurement, and no reproducible decode of those tables has
+been produced. Treat the size of the change as unknown until someone measures
+it properly. See section 6 of [docs/FINDINGS.md](docs/FINDINGS.md).
 
 ### Rollback
 
 ```bash
-python3 tools/inject.py org.maniac79.nvptool.Rollback org.maniac79.nvptool
+./tools/nvptool.sh restore          # per-field, from your verified backup
 adb reboot
-adb shell getprop vendor.safe_volume.enabled     # expect 01000000 again
+./tools/nvptool.sh status           # expect safe_volume 01000000 again
 ```
 
-`Rollback` writes the factory values recorded from this device and verifies
-them the same way. Keep `out/nvptool.apk` — you need it to roll back, and it is
-not committed to this repository.
+Restore uses the backup taken before the write, validates its integrity,
+device serial and firmware, and refuses a corrupt or foreign file. The built-in
+reference profile is a separate, clearly-marked advanced operation
+(`restore-reference`) and is *not* a substitute for a backup.
+
+Keep `out/nvptool.apk` — you need it to restore, and it is not committed here.
 
 ---
 
@@ -209,7 +271,7 @@ it is reachable only from SELinux domains granted `hwservice_manager find` on
 `properties_hwservice`: `platform_app`, `priv_app`, `system_app`. A normally
 installed app runs as `untrusted_app` and is denied.
 
-`tools/inject.py` starts `app_process` as uid 1000 with
+The host CLI (`tools/nvptool.sh`, via `tools/lib.sh`) starts `app_process` as uid 1000 with
 `seinfo=platform:targetSdkVersion=29:complete`, putting it in the `platform_app`
 domain so it can talk to the HAL. It uses the publicly documented zygote
 command-line issue CVE-2024-31317 to do that; this is a thin wrapper, and the
@@ -225,14 +287,17 @@ The spawn occasionally produces no output — re-run the command.
 
 ```
 src/org/maniac79/nvptool/Nvp.java       HAL client: get/set + read-back verify
-src/org/maniac79/nvptool/Read.java      read-only dump
-src/org/maniac79/nvptool/Apply.java     write the configuration (model-guarded)
-src/org/maniac79/nvptool/Rollback.java  restore factory values
+src/org/maniac79/nvptool/Profile.java   profile, field schema, guards
+tools/inject.ps1                        strict runner (Windows; read-only use)
+src/org/maniac79/nvptool/Result.java    structured completion records
+src/org/maniac79/nvptool/Read.java      privileged read
+src/org/maniac79/nvptool/Apply.java     write the configuration
+src/org/maniac79/nvptool/RestoreField.java  per-field restore from backup
+src/org/maniac79/nvptool/RestoreReference.java  advanced reference profile
 src/AndroidManifest.xml                 no components, on purpose
 tools/build.sh                          build + sign the APK (bash)
-tools/inject.py                         start a class in platform_app (Python)
-tools/inject.sh                         same, macOS/Linux — needs only adb
-tools/inject.ps1                        same, Windows — needs only adb
+tools/lib.sh                            host helpers (device, lock, backup)
+tools/nvptool.sh                        host CLI / orchestrator
 packaging/macos/START-macos.command     double-click starter (macOS)
 packaging/linux/START-linux.sh          starter (Linux)
 packaging/windows/START-windows.bat     double-click starter (Windows)
@@ -284,9 +349,11 @@ reads `00000000`. If `Apply` printed fewer than 8/8 verified fields, re-run it:
 the spawn step is occasionally flaky and produces no output at all.
 
 **How much louder is it, really?**
-The two output tables differ by roughly 3 dB on average, with the biggest
-difference in the upper volume range, plus the High Gain switch starts working.
-It is a noticeable step, not a doubling of loudness.
+Unknown, and we are not going to invent a number. The two shipped tables differ
+in 3202 of 15738 bytes, which suggests a modest, upper-range-weighted change, but
+no reproducible decode or electrical measurement exists. Also unproven: the
+minimum set of fields actually needed, and whether the High Gain switch becomes
+audible after the change (see `docs/FINDINGS.md` §2 and §7).
 
 **Does it affect battery life, Plexamp, Chrome or streaming?**
 No. It changes audio calibration values only. No background service, process or

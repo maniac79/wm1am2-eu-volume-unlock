@@ -58,22 +58,39 @@ Two issues combine:
 
 ## Impact
 
-NVRAM is not limited to audio calibration. The property table exposed by this
-interface includes, among others:
+### What was actually demonstrated
 
-* `ro.product.serial_number`, `ro.product.model_id`, `ro.product.product_code`
-* `ro.product.destination`, `ro.user.destination`
-* `ro.product.body_color`, `ro.product.bundled_hp`
-* all audio calibration and volume-table selectors
-* `ro.updater.*` identifiers
+On the tested unit, from a process spawned as uid 1000 with
+`seinfo=platform:targetSdkVersion=29:complete` (SELinux domain `platform_app`):
 
-A privileged app can therefore rewrite device identity and region data
-persistently, surviving factory reset in some cases, without root and without
-unlocking the bootloader. This is exactly the class of data that warranty,
-region locking and update logic rely on.
+* `get()` returned the raw bytes of the eight audio fields used by this tool;
+* `set()` changed those fields, and a subsequent `get()` returned the new bytes;
+* writes survived a reboot.
 
-Given that the same platform permits `priv_app`-level code from any OEM or
-preinstalled partner application, the practical trust boundary is weak.
+That is the entire demonstrated surface. It is enough to justify reporting the
+design, and not enough to characterise the full blast radius.
+
+### What is inferred, not demonstrated
+
+The interface is generic (any key the vendor table contains) and the property
+list we extracted names identity and region fields such as
+`ro.product.serial_number`, `ro.product.model_id` and `ro.product.destination`.
+It follows that those are *reachable in principle*, but **no identity field was
+written** and no attempt was made to do so. Treat that as an assessment, not a
+finding.
+
+### Access model — be precise
+
+SELinux is an access-control mechanism, not a permission system. The policy text
+grants `hwservice_manager find` on `properties_hwservice` to `platform_app`,
+`priv_app` and `system_app`, and grants the device node itself only to
+`hw_properties`. Reading policy is not the same as testing every domain, and
+testing one uid proves nothing about "any app": an ordinary sideloaded app runs
+as `untrusted_app` and was **not** shown to be able to reach the HAL.
+
+No claim is made here about battery life, third-party applications, or any other
+behaviour; nothing of that kind was measured.
+
 
 ## What was not tested
 

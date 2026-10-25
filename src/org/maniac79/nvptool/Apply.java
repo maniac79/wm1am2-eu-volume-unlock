@@ -1,25 +1,38 @@
 package org.maniac79.nvptool;
 
 /**
- * Apply the fix. Writes NVP fields and verifies every one by read-back.
- * Reboot afterwards: the DAC volume table is loaded at boot by init.
+ * Write the eight target fields.
  *
- * Run:  python3 tools/inject.py 1000 'platform:targetSdkVersion=29:complete' \
- *           org.maniac79.nvptool.Apply org.maniac79.nvptool
+ * argv: [0] run id, [1] optional expected state digest (the host passes the
+ *       digest recorded in its verified backup; a mismatch means the device
+ *       changed since that backup was taken, and nothing is written).
  *
- * Only tested on NW-WM1AM2. Any other model aborts deliberately.
+ * Order of operations, all fail-closed:
+ *   1. shared environment guard (model + firmware fingerprint)
+ *   2. HAL reachable
+ *   3. read ALL eight fields; any read failure or unexpected length aborts
+ *   4. optional digest comparison against the host backup
+ *   5. every starting value must be a recognised one (target or reference)
+ *   6. if all eight already equal the target: no writes at all
+ *   7. otherwise write one field at a time, stop at the first failure
+ *
+ * There is no atomicity across the eight independent HAL calls: a mid-way
+ * failure leaves a partial state on purpose, and the summary reports exactly
+ * how far it got so the host can journal and recover from a known state.
  */
 public final class Apply {
 
-    static final String EXPECTED_MODEL = "NW-WM1AM2";
-
     public static void main(String[] args) {
-        Nvp.log("=== NVPTOOL apply ===");
-        Nvp.log("model=" + android.os.Build.MODEL + " fingerprint=" + android.os.Build.FINGERPRINT);
+        String runId = args.length > 0 ? args[0] : "-";
+        String expect = args.length > 1 ? args[1] : null;
+        Result r = new Result(runId, "apply");
+        r.begin();
 
-        if (!EXPECTED_MODEL.equals(android.os.Build.MODEL)) {
-            Nvp.log("ABORT: this tool is written for " + EXPECTED_MODEL
-                    + " only. Edit EXPECTED_MODEL in Apply.java at your own risk.");
+        String env = Profile.checkEnvironment();
+        if (env != null) {
+            r.note("guard=" + env);
+            r.summary(Result.REFUSED, "preflight", 0, 0, Profile.COUNT, env);
+            System.exit(Result.EXIT_REFUSED);
             return;
         }
 
@@ -27,39 +40,98 @@ public final class Apply {
         try {
             nvp = Nvp.connect();
         } catch (Throwable t) {
-            Nvp.log("FATAL: cannot reach HAL: " + t);
+            r.summary(Result.FATAL, "preflight", 0, 0, Profile.COUNT, "hal_unavailable");
+            System.exit(Result.EXIT_FATAL);
             return;
         }
 
-        int ok = 0;
-        int total = 8;
-
-        try {
-            Nvp.log("--- volume table selectors (ALC) ---");
-            if (nvp.setString("ro.vendor.alc.voltbl_id.se_high", "kVolTblIcx1298HpSeGainHigh")) ok++;
-            if (nvp.setString("ro.vendor.alc.voltbl_id.se_low", "kVolTblIcx1298HpSeGainLow")) ok++;
-            if (nvp.setString("ro.vendor.alc.voltbl_id.btl_high", "kVolTblIcx1298HpBtlGainHigh")) ok++;
-            if (nvp.setString("ro.vendor.alc.voltbl_id.btl_low", "kVolTblIcx1298HpBtlGainLow")) ok++;
-
-            Nvp.log("--- gain mode / safe volume ---");
-            if (nvp.setInt("ro.app.highgain.mode", 1)) ok++;
-            if (nvp.setInt("ro.volume.gain.se", 1)) ok++;
-            if (nvp.setInt("ro.volume.gain.btl", 1)) ok++;
-
-            // This is the field that actually feeds load_volume_table at boot.
-            if (nvp.setInt("ro.safe_volume.enabled", 0)) ok++;
-
-        } catch (Throwable t) {
-            Nvp.log("ERROR during write: " + t);
+        byte[][] cur = new byte[Profile.COUNT][];
+        for (int i = 0; i < Profile.COUNT; i++) {
+            try {
+                cur[i] = nvp.get(Profile.KEYS[i]);
+            } catch (Throwable t) {
+                cur[i] = null;
+            }
+            if (cur[i] == null) {
+                r.summary(Result.FATAL, "read", 0, 0, Profile.COUNT, "read_failed_" + i);
+                System.exit(Result.EXIT_FATAL);
+                return;
+            }
+            if (cur[i].length != Profile.LENS[i]) {
+                r.summary(Result.REFUSED, "read", 0, 0, Profile.COUNT, "field_length_" + i);
+                System.exit(Result.EXIT_REFUSED);
+                return;
+            }
         }
 
-        Nvp.log("=== " + ok + "/" + total + " fields written and verified ===");
-        if (ok == total) {
-            Nvp.log("SUCCESS - now reboot. Verify after boot with:");
-            Nvp.log("  adb shell getprop vendor.safe_volume.enabled   # expect 00000000");
-        } else {
-            Nvp.log("INCOMPLETE - do not reboot blindly, re-run or use Rollback.");
+        if (expect != null && !expect.equals(Profile.digest(cur))) {
+            r.summary(Result.ABORT, "read", 0, 0, Profile.COUNT, "state_changed_since_backup");
+            System.exit(Result.EXIT_ABORT);
+            return;
         }
-        Nvp.log("=== done ===");
+
+        for (int i = 0; i < Profile.COUNT; i++) {
+            if (!Profile.same(cur[i], Profile.target(i))
+                    && !Profile.same(cur[i], Profile.reference(i))) {
+                r.summary(Result.REFUSED, "read", 0, 0, Profile.COUNT, "unrecognized_value_" + i);
+                System.exit(Result.EXIT_REFUSED);
+                return;
+            }
+        }
+
+        boolean allTarget = true;
+        for (int i = 0; i < Profile.COUNT; i++) {
+            if (!Profile.same(cur[i], Profile.target(i))) {
+                allTarget = false;
+                break;
+            }
+        }
+        if (allTarget) {
+            r.note("no_write_needed");
+            r.summary(Result.OK, "done", 0, Profile.COUNT, Profile.COUNT, "already_applied");
+            System.exit(Result.EXIT_OK);
+            return;
+        }
+
+        int written = 0;
+        int verified = 0;
+        String status = Result.OK;
+        String reason = "-";
+
+        for (int i = 0; i < Profile.COUNT; i++) {
+            byte[] want = Profile.target(i);
+            if (Profile.same(cur[i], want)) {
+                verified++;
+                continue;
+            }
+            try {
+                nvp.set(Profile.KEYS[i], want);
+            } catch (Throwable t) {
+                status = Result.INCOMPLETE;
+                reason = "write_failed_" + i;
+                break;
+            }
+            written++;
+            byte[] now = null;
+            try {
+                now = nvp.get(Profile.KEYS[i]);
+            } catch (Throwable t) {
+                now = null;
+            }
+            if (!Profile.same(now, want)) {
+                status = Result.INCOMPLETE;
+                reason = "verify_failed_" + i;
+                break;
+            }
+            verified++;
+        }
+
+        if (Result.OK.equals(status) && verified != Profile.COUNT) {
+            status = Result.INCOMPLETE;
+            reason = "not_all_verified";
+        }
+
+        r.summary(status, "write", written, verified, Profile.COUNT, reason);
+        System.exit(Result.exitFor(status));
     }
 }

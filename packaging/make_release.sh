@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Build the per-OS release archives into dist/.
-# Run from anywhere: ./packaging/make_release.sh
+#
+# Each archive contains the licence, the disclaimer/compatibility notes and a
+# SHA-256 manifest of its own contents.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -17,25 +19,54 @@ fi
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
+sha_line() {   # emit "<hash>  <name>" for one file
+    local f="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$f" | sed "s|  .*/|  |"
+    else
+        shasum -a 256 "$f" | sed "s|  .*/|  |"
+    fi
+}
+
+finish() {   # $1 = archive dir; writes SHA256SUMS.txt over the shipped files
+    local d="$1"
+    (
+        cd "$d"
+        : > SHA256SUMS.txt
+        for f in $(ls -1 | grep -v '^SHA256SUMS.txt$'); do
+            [ -f "$f" ] && sha_line "$f" >> SHA256SUMS.txt
+        done
+    )
+}
+
+common_files() {   # $1 = target dir
+    local d="$1"
+    cp "$ROOT/LICENSE"              "$d/"
+    cp "$COMMON/QUICKSTART.txt"     "$d/"
+    cp "$APK"                       "$d/"
+}
+
 # ---------------- macOS ----------------
 M="$DIST/wm1am2-nvptool-macos"
 mkdir -p "$M"
 cp "$ROOT/packaging/macos/START-macos.command" "$M/"
 cp "$COMMON/menu.sh"                            "$M/"
-cp "$ROOT/tools/inject.sh"                      "$M/"
-cp "$COMMON/QUICKSTART.txt"                     "$M/"
-cp "$APK"                                       "$M/"
-chmod +x "$M/START-macos.command" "$M/menu.sh" "$M/inject.sh"
+cp "$ROOT/tools/nvptool.sh"                     "$M/"
+cp "$ROOT/tools/lib.sh"                         "$M/"
+common_files "$M"
+chmod +x "$M/START-macos.command" "$M/menu.sh" "$M/nvptool.sh" "$M/lib.sh"
+finish "$M"
 
 # ---------------- Linux ----------------
 L="$DIST/wm1am2-nvptool-linux"
 mkdir -p "$L"
 cp "$ROOT/packaging/linux/START-linux.sh" "$L/"
 cp "$COMMON/menu.sh"                      "$L/"
-cp "$ROOT/tools/inject.sh"                "$L/"
-cp "$COMMON/QUICKSTART.txt"               "$L/"
-cp "$APK"                                 "$L/"
-chmod +x "$L/START-linux.sh" "$L/menu.sh" "$L/inject.sh"
+cp "$ROOT/tools/nvptool.sh"               "$L/"
+cp "$ROOT/tools/lib.sh"                   "$L/"
+common_files "$L"
+chmod +x "$L/START-linux.sh" "$L/menu.sh" "$L/nvptool.sh" "$L/lib.sh"
+finish "$L"
 
 # ---------------- Windows ----------------
 W="$DIST/wm1am2-nvptool-windows"
@@ -43,8 +74,8 @@ mkdir -p "$W"
 cp "$ROOT/packaging/windows/START-windows.bat" "$W/"
 cp "$ROOT/packaging/windows/menu.ps1"          "$W/"
 cp "$ROOT/tools/inject.ps1"                    "$W/"
-cp "$COMMON/QUICKSTART.txt"                    "$W/"
-cp "$APK"                                      "$W/"
+common_files "$W"
+finish "$W"
 
 # ---------------- zip ----------------
 cd "$DIST"
@@ -53,12 +84,9 @@ for d in wm1am2-nvptool-macos wm1am2-nvptool-linux wm1am2-nvptool-windows; do
     zip -qr "$d.zip" "$d"
 done
 
-echo "Built in $DIST:"
+echo "Built:"
 ls -la "$DIST"/*.zip
 echo
 echo "SHA-256:"
-if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$DIST"/*.zip
-else
-    sha256sum "$DIST"/*.zip
-fi
+for z in "$DIST"/*.zip; do sha_line "$z"; done
+

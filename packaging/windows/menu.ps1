@@ -1,5 +1,9 @@
-# Interactive helper for the NW-WM1AM2 volume-cap tool. Windows / PowerShell.
-# Called by START-windows.bat. Needs only adb.
+# Windows menu - deliberately limited to non-mutating actions.
+#
+# The full orchestration (verified backup before writing, write-ahead journal,
+# per-field restore) is implemented and host-tested only in the bash tool
+# (nvptool.sh). Until the PowerShell equivalent is validated, this menu offers
+# status / full read / reboot and refuses to write anything.
 
 $ErrorActionPreference = 'Continue'
 $Here = $PSScriptRoot
@@ -7,10 +11,10 @@ Set-Location $Here
 
 $Pkg = 'org.maniac79.nvptool'
 $Apk = 'nvptool.apk'
+$ExpectedVersion = '1.1.0'
 $script:Adb = $null
 
 function Write-Hr { Write-Host ('-' * 60) }
-
 function Pause-Menu {
     Write-Host ''
     Write-Host 'Press Enter to continue...' -NoNewline
@@ -20,41 +24,31 @@ function Pause-Menu {
 function Find-Adb {
     $cmd = Get-Command adb -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
-
-    $candidates = @(
+    foreach ($c in @(
         (Join-Path $Here 'platform-tools\adb.exe'),
         (Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe'),
-        (Join-Path $env:USERPROFILE 'AppData\Local\Android\Sdk\platform-tools\adb.exe'),
-        'C:\platform-tools\adb.exe'
-    )
-    foreach ($c in $candidates) {
+        'C:\platform-tools\adb.exe')) {
         if ($c -and (Test-Path $c)) { return $c }
     }
     return $null
 }
 
-function Show-AdbMissing {
+function Show-Requirements {
     Write-Hr
-    Write-Host '  adb was not found on this computer.'
+    Write-Host '  Requirements'
     Write-Hr
     @'
-  You do not need the full Android SDK - only "Platform Tools".
+  You do not need the full Android SDK - only "Platform Tools":
+    https://developer.android.com/tools/releases/platform-tools
+  Unzip it and either put the folder next to this menu (platform-tools\adb.exe)
+  or add it to PATH.
 
-  1. Download "SDK Platform-Tools" for Windows:
-       https://developer.android.com/tools/releases/platform-tools
-  2. Unzip it; you get a folder named "platform-tools".
-  3. Then do ONE of these:
-       a) Move that folder next to this script, so this file exists:
-            platform-tools\adb.exe
-       b) Or add it to your PATH and reopen this window.
-  4. Prepare the player:
-       - Settings > About device > tap "Build number" seven times
-       - Settings > System > Developer options > enable "USB debugging"
-       - Connect the USB cable, then accept "Allow USB debugging?" on the
-         player (tick "Always allow from this computer").
-  5. Start START-windows.bat again.
+  On the player:
+    Settings > About device > tap "Build number" 7x
+    Developer options > enable "USB debugging"
+    Connect USB, accept "Allow USB debugging?", tick "Always allow".
 
-  Nothing has been changed on your player.
+  Supported configuration: NW-WM1AM2, Android 11, firmware 1.09.00.
 '@ | Write-Host
     Write-Hr
     Pause-Menu
@@ -65,92 +59,18 @@ function Test-Device {
     return ($state -eq 'device')
 }
 
-function Show-NoDevice {
+function Show-Status {
     Write-Hr
-    Write-Host '  adb is installed, but no authorised player was found.'
+    Write-Host '  Status (read-only)'
     Write-Hr
-    @'
-  Check these, in order:
-    - Is the Walkman connected with a data-capable USB cable?
-    - Is "USB debugging" enabled in Developer options?
-    - Did you accept the "Allow USB debugging?" prompt on the player?
-      (If it never appears, unplug and replug the cable.)
-'@ | Write-Host
+    $model = (& adb shell getprop ro.product.model 2>$null | Out-String).Trim()
+    $dest = (& adb shell getprop vendor.destination 2>$null | Out-String).Trim()
+    $safe = (& adb shell getprop vendor.safe_volume.enabled 2>$null | Out-String).Trim()
+    Write-Host "  device      : $model"
+    Write-Host "  destination : $dest"
+    Write-Host "  safe_volume : $safe"
     Write-Host ''
-    Write-Host '  adb devices says:'
-    (& adb devices 2>&1) | ForEach-Object { Write-Host "    $_" }
-    Write-Host ''
-    Pause-Menu
-}
-
-function Install-Apk {
-    $found = (& adb shell "pm path $Pkg" 2>$null | Out-String)
-    if ($found -match 'package:') { return $true }
-
-    Write-Host ''
-    Write-Host '  The helper app is not installed on the player yet.'
-    $a = Read-Host "  Install it now from $Apk? [Y/n]"
-    if ($a -match '^[nN]') { return $false }
-    if (-not (Test-Path (Join-Path $Here $Apk))) {
-        Write-Host "  $Apk is missing from this folder."
-        Pause-Menu
-        return $false
-    }
-    Write-Host '  installing...'
-    & adb install -r (Join-Path $Here $Apk) | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host '  Install failed.'
-        Pause-Menu
-        return $false
-    }
-    Write-Host '  installed.'
-    return $true
-}
-
-function Invoke-Class {
-    param([string]$ClassName, [string]$Label)
-
-    Write-Hr
-    Write-Host "  $Label"
-    Write-Hr
-
-    $out = & (Join-Path $Here 'inject.ps1') $ClassName 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($out)) {
-        Write-Host $out
-        Write-Host ''
-        Write-Host '  No usable output came back. This step is known to be flaky;'
-        Write-Host '  simply run it again.'
-        Pause-Menu
-        return $false
-    }
-    $out.TrimEnd() -split "`n" | ForEach-Object { Write-Host "  $_" }
-    return $true
-}
-
-function Confirm-Yes {
-    param([string]$Question)
-    $a = Read-Host "$Question [yes/NO]"
-    return ($a -eq 'yes' -or $a -eq 'YES' -or $a -eq 'Yes')
-}
-
-function Invoke-Reboot {
-    Write-Host '  Rebooting the player...'
-    & adb reboot *> $null
-    Write-Host '  Done. Wait for it to start up again.'
-    Pause-Menu
-}
-
-function Show-Menu {
-    Write-Hr
-    Write-Host '  Sony NW-WM1AM2 - EU volume cap tool'
-    Write-Hr
-    Write-Host '  1) Check status            (read-only, changes nothing)'
-    Write-Host '  2) Enable the fix          (writes NVRAM, then reboot)'
-    Write-Host '  3) Restore factory setting (undo everything)'
-    Write-Host '  4) Reboot the player'
-    Write-Host '  5) Where is adb? / requirements'
-    Write-Host '  0) Exit'
-    Write-Host ''
+    Write-Host '  No app installed, no privilege used, no setting changed, no NVRAM written.'
 }
 
 # --------------------------------------------------------------------------
@@ -160,60 +80,56 @@ if ($script:Adb) {
     $env:PATH = "$adbDir;$env:PATH"
 }
 
+if (-not $script:Adb) { Show-Requirements }
+
 while ($true) {
-    Show-Menu
+    Write-Hr
+    Write-Host '  Sony NW-WM1AM2 - EU volume cap tool  (experimental)'
+    Write-Hr
+    Write-Host '  1) Status          read-only, changes nothing'
+    Write-Host '  2) Full NVP read   privileged read only (no writes)'
+    Write-Host '  3) Reboot the player'
+    Write-Host '  6) Requirements / where is adb'
+    Write-Host '  0) Exit'
+    Write-Host ''
+    Write-Host '  NOTE: applying or restoring on Windows is not supported yet.'
+    Write-Host '  Use the macOS or Linux package for that; it takes a verified'
+    Write-Host '  backup before every write.'
+    Write-Host ''
     $choice = Read-Host '  Choice'
 
-    if ($choice -eq '0' -or $choice -eq 'q' -or $choice -eq 'Q' -or [string]::IsNullOrWhiteSpace($choice)) {
-        exit 0
+    if ($choice -eq '0' -or [string]::IsNullOrWhiteSpace($choice)) { exit 0 }
+    if ($choice -eq '6' -or -not $script:Adb) { Show-Requirements; continue }
+
+    if (-not (Test-Device)) {
+        Write-Hr
+        Write-Host '  No authorised device found. Check USB debugging and the prompt.'
+        Write-Hr
+        Pause-Menu
+        continue
     }
-
-    if ($choice -eq '5') { Show-AdbMissing; continue }
-
-    if (-not $script:Adb) { Show-AdbMissing; continue }
-    if (-not (Test-Device)) { Show-NoDevice; continue }
 
     switch ($choice) {
-        '1' {
-            if (-not (Install-Apk)) { continue }
-            Invoke-Class -ClassName 'org.maniac79.nvptool.Read' -Label 'Reading current values' | Out-Null
+        '1' { Show-Status; Pause-Menu }
+        '2' {
+            Write-Hr
+            Write-Host '  Full NVP read (privileged, read-only)'
+            Write-Hr
+            $run = "win-$(Get-Date -Format yyyyMMddHHmmss)"
+            $out = & (Join-Path $Here 'inject.ps1') -ClassName 'org.maniac79.nvptool.Read' -RunId $run 2>&1 | Out-String
+            Write-Host $out
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host '  Read did not produce a complete result - see the message above.'
+            }
             Write-Host ''
-            Write-Host '  Look for:  ro.safe_volume.enabled = 00000000   (fix active)'
-            Write-Host '             ro.safe_volume.enabled = 01000000   (factory / capped)'
+            Write-Host '  Applying is not available on Windows yet; use the macOS/Linux package.'
             Pause-Menu
         }
-        '2' {
-            if (-not (Install-Apk)) { continue }
-            Write-Hr
-            Write-Host "  This writes eight calibration fields into the player's NVRAM"
-            Write-Host '  and needs a reboot afterwards. Option 3 undoes it.'
-            Write-Hr
-            if (-not (Confirm-Yes 'Continue?')) { continue }
-            if (Invoke-Class -ClassName 'org.maniac79.nvptool.Apply' -Label 'Applying configuration') {
-                if (Confirm-Yes 'Reboot now so the change takes effect?') {
-                    Invoke-Reboot
-                }
-                else {
-                    Write-Host '  Remember to reboot before judging the result.'
-                    Pause-Menu
-                }
-            }
-        }
         '3' {
-            if (-not (Install-Apk)) { continue }
-            Write-Hr
-            Write-Host '  This restores the values recorded from the tested unit.'
-            Write-Hr
-            if (-not (Confirm-Yes 'Restore factory settings?')) { continue }
-            if (Invoke-Class -ClassName 'org.maniac79.nvptool.Rollback' -Label 'Restoring factory values') {
-                if (Confirm-Yes 'Reboot now?') { Invoke-Reboot } else { Pause-Menu }
-            }
+            & adb reboot *> $null
+            Write-Host '  Reboot requested.'
+            Pause-Menu
         }
-        '4' { Invoke-Reboot }
-        default {
-            Write-Host '  Unknown choice.'
-            Start-Sleep -Seconds 1
-        }
+        default { Write-Host '  Unknown or unsupported choice.'; Start-Sleep -Seconds 1 }
     }
 }
-

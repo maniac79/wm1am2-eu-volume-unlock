@@ -195,11 +195,20 @@ receives, which is why it is the check we rely on.
 same values and reports all eight as verified — so it can be used to confirm
 that the configuration is still intact.
 
-**Magnitude:** the two output volume tables differ in 3202 of 15 738 bytes.
-Interpreted as attenuation the EU table is on average about **3.2 dB** quieter,
-with the largest difference in the upper volume range. That is audible but not
-dramatic — it is *not* the "different league" some descriptions suggest. Other
-owners' reports of uncapped EU units ("slightly louder") match this.
+**Magnitude: not established.** The two shipped output tables differ in 3202 of
+15738 bytes. That is a byte-diff, not an attenuation measurement: converting it
+to decibels requires decoding the table format, which has not been done, and no
+electrical or acoustic measurement has been made. The honest statement is
+"something changed in the calibration data, weighted towards the upper volume
+range", not "3.2 dB louder". Earlier revisions of this document quoted ~3.2 dB;
+that figure was an unsupported inference and has been removed.
+
+**What is observed vs. what is interpreted.** Observed: eight field values are
+written and read back equal (verified on the tested unit). Interpreted: that the
+boot script then loads the non-CEU table, because `vendor.safe_volume.enabled`
+reads `00000000`. Not established: the minimum field set required, whether the
+High Gain switch becomes audible, and the size of any loudness change.
+Listening impressions are just that — impressions, not measurements.
 
 Be careful with your ears while testing: the change applies at high volume.
 

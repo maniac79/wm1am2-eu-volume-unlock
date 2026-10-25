@@ -5,7 +5,9 @@
   so it exposes no activities, services, receivers or providers.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="org.maniac79.nvptool">
+    package="org.maniac79.nvptool"
+    android:versionCode="2"
+    android:versionName="1.1.0">
 
     <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="29" />
 

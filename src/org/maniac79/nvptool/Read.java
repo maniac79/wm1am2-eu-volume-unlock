@@ -1,71 +1,59 @@
 package org.maniac79.nvptool;
 
 /**
- * READ-ONLY. Dumps the NVP fields that matter for the EU loudness limit.
- * Safe to run at any time; changes nothing.
+ * Read all eight fields as raw bytes and emit them as structured records.
  *
- * Run:  python3 tools/inject.py 1000 'platform:targetSdkVersion=29:complete' \
- *           org.maniac79.nvptool.Read org.maniac79.nvptool
+ * This is the privileged full read: it needs the temporary privilege escalation
+ * and the vendor HAL, but it performs no writes. It is deliberately separate
+ * from the basic status check, which needs no privilege at all (see the README).
+ *
+ * argv: [0] run id
  */
 public final class Read {
 
-    private static final String[] STRING_FIELDS = {
-            "ro.vendor.alc.voltbl_id.se_high",
-            "ro.vendor.alc.voltbl_id.se_low",
-            "ro.vendor.alc.voltbl_id.se_high_amb",
-            "ro.vendor.alc.voltbl_id.se_high_nc",
-            "ro.vendor.alc.voltbl_id.btl_high",
-            "ro.vendor.alc.voltbl_id.btl_low",
-            "ro.vendor.eq.voltbl_id.se_high",
-            "ro.vendor.eq.voltbl_id.se_low",
-            "ro.vendor.eq.voltbl_id.btl_high",
-            "ro.vendor.eq.voltbl_id.btl_low",
-            "ro.product.model_id",
-            "ro.product.bundled_hp"
-    };
-
-    private static final String[] INT_FIELDS = {
-            "ro.product.destination",
-            "ro.user.destination",
-            "ro.app.highgain.mode",
-            "ro.safe_volume.enabled",
-            "ro.safe_volume.default",
-            "ro.safe_volume.v3.enabled",
-            "ro.volume.gain.se",
-            "ro.volume.gain.btl",
-            "ro.volume.default",
-            "ro.volume.default.se.high",
-            "ro.volume.default.se.normal",
-            "ro.volume.default.btl.high",
-            "ro.volume.default.btl.normal",
-            "ro.regiondata.version"
-    };
-
     public static void main(String[] args) {
-        Nvp.log("=== NVPTOOL read-only dump ===");
-        Nvp.log("model=" + android.os.Build.MODEL + " fingerprint=" + android.os.Build.FINGERPRINT);
-        Nvp.log("uid=" + android.os.Process.myUid());
+        String runId = args.length > 0 ? args[0] : "-";
+        Result r = new Result(runId, "read");
+        r.begin();
+
+        String env = Profile.checkEnvironment();
+        if (env != null) {
+            r.note("guard=" + env);
+            r.summary(Result.REFUSED, "preflight", 0, 0, Profile.COUNT, env);
+            System.exit(Result.EXIT_REFUSED);
+            return;
+        }
 
         Nvp nvp;
         try {
             nvp = Nvp.connect();
         } catch (Throwable t) {
-            Nvp.log("FATAL: cannot reach HAL: " + t);
+            r.summary(Result.FATAL, "preflight", 0, 0, Profile.COUNT, "hal_unavailable");
+            System.exit(Result.EXIT_FATAL);
             return;
         }
 
-        Nvp.log("--- volume table selectors (ALC) ---");
-        for (int i = 0; i < 6; i++) nvp.dump(STRING_FIELDS[i]);
+        for (int i = 0; i < Profile.COUNT; i++) {
+            byte[] v;
+            try {
+                v = nvp.get(Profile.KEYS[i]);
+            } catch (Throwable t) {
+                v = null;
+            }
+            if (v == null) {
+                r.summary(Result.FATAL, "read", 0, 0, Profile.COUNT, "read_failed_" + i);
+                System.exit(Result.EXIT_FATAL);
+                return;
+            }
+            if (v.length != Profile.LENS[i]) {
+                r.summary(Result.REFUSED, "read", 0, 0, Profile.COUNT, "field_length_" + i);
+                System.exit(Result.EXIT_REFUSED);
+                return;
+            }
+            r.field(i, Profile.KEYS[i], v);
+        }
 
-        Nvp.log("--- volume table selectors (EQ) ---");
-        for (int i = 6; i < 10; i++) nvp.dump(STRING_FIELDS[i]);
-
-        Nvp.log("--- gain / safe volume / destination ---");
-        for (int i = 0; i < INT_FIELDS.length; i++) nvp.dump(INT_FIELDS[i]);
-
-        Nvp.log("--- identity ---");
-        for (int i = 10; i < STRING_FIELDS.length; i++) nvp.dump(STRING_FIELDS[i]);
-
-        Nvp.log("=== done ===");
+        r.summary(Result.OK, "read", 0, Profile.COUNT, Profile.COUNT, "read_only");
+        System.exit(Result.EXIT_OK);
     }
 }
