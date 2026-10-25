@@ -167,6 +167,11 @@
    Good to know
    ------------
      - Turn the volume down before testing, then raise it gradually.
+     - If you installed an earlier build of this tool (0.1.0 - 0.2.1), remove
+       that old helper once before installing this one, because the signing key
+       changed:
+           adb uninstall org.maniac79.nvptool
+       That removes the app only. Your NVRAM values are untouched.
      - A firmware update may undo or alter the result, and this is untested. Do
        not simply re-run apply on an unknown firmware: confirm the firmware
        fingerprint first (option 1 fails closed on an unsupported build).

@@ -92,10 +92,22 @@ common_files "$W"
 finish "$W"
 
 # ---------------- zip ----------------
+VER=$(sed -n 's/.*TOOL_VERSION = "\([^"]*\)".*/\1/p' \
+    "$ROOT/src/org/maniac79/nvptool/Profile.java" | head -1)
+if [ -z "$VER" ]; then
+    echo "cannot read TOOL_VERSION from src/org/maniac79/nvptool/Profile.java" >&2
+    exit 1
+fi
+
 cd "$DIST"
 for d in wm1am2-nvptool-macos wm1am2-nvptool-linux wm1am2-nvptool-windows; do
-    rm -f "$d.zip"
-    zip -qr "$d.zip" "$d"
+    # Versioned archive names: two downloads can coexist on disk, a stale copy is
+    # identifiable, and a checksum in the notes points at exactly one file. The
+    # directory inside stays unversioned so the starters' relative paths and the
+    # manifest inside are unaffected.
+    out="$d-$VER.zip"
+    rm -f "$d.zip" "$out"
+    zip -qr "$out" "$d"
 done
 
 echo "Built:"

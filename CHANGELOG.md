@@ -9,7 +9,36 @@ safety defects.
 
 ---
 
-## 0.2.1 — current, experimental pre-release
+## 0.2.2 — current, experimental pre-release
+
+Source commit: the `v0.2.2` tag. Functionally identical to 0.2.1 — this release
+exists for **one** reason: the signing key.
+
+- **The APK is now signed with a dedicated release key**, not the shared Android
+  debug key that 0.1.0 through 0.2.1 used. Certificate
+  `c21c663d…42c992`, RSA 4096, `CN=nvptool release key`; see `docs/SIGNING.md`.
+  A helper installed from an earlier build must be removed once before
+  installing this one (`adb uninstall org.maniac79.nvptool`). That removes the
+  app only: the eight NVRAM values are device state and are unaffected.
+  `versionCode` 4 → 5. This rotation was safe because the project has no
+  installed base; it is not a precedent for silent rotation.
+- **`build.sh` no longer creates a debug key on demand.** It requires the
+  dedicated keystore (created once by the new `tools/init_signing_key.sh`), reads
+  the password from `NVPTOOL_KEYSTORE_PASS` or a `0600` file, and fails the build
+  if the keystore is missing or the certificate does not match the pin.
+- **Archive names now carry the version** (`wm1am2-nvptool-macos-0.2.2.zip`), so
+  two downloads can coexist and a stale copy is identifiable. The directory
+  inside is unchanged, so the starters and the inner manifest are unaffected.
+- `tests/docs/check_docs.sh` also verifies that the README names the archives for
+  the current version.
+
+Everything from 0.2.1 is included: the `restore-reference` false-success fix, the
+fail-closed `apply`/`restore` cleanup handling, the Windows-menu output fix, the
+rewritten `QUICKSTART.txt`, the README corrections and the documentation checks.
+
+---
+
+## 0.2.1 — withdrawn (binaries removed, tag kept)
 
 Source commit: the `v0.2.1` tag. Replaces the withdrawn 0.2.0 binaries: those
 contained the three defects below (the Windows menu in particular printed

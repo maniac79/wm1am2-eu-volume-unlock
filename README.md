@@ -241,15 +241,27 @@ this tool as unsupported on that build until it is updated for it.
 ### Easiest way — download, extract, double-click
 
 Grab the archive for your OS from
-the [v0.2.1 release](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.1)
-(this is the **only** published download; the 0.2.0 and 0.1.0 builds have been
-withdrawn, and their Git tags are kept for traceability only):
+the [v0.2.2 release](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.2)
+(this is the **only** published download; the 0.1.0, 0.2.0 and 0.2.1 builds have
+been withdrawn, and their Git tags are kept for traceability only):
 
 | Archive | Starter |
 |---|---|
-| `wm1am2-nvptool-macos.zip` | `START-macos.command` |
-| `wm1am2-nvptool-windows.zip` | `START-windows.bat` |
-| `wm1am2-nvptool-linux.zip` | `START-linux.sh` |
+| `wm1am2-nvptool-macos-0.2.2.zip` | `START-macos.command` |
+| `wm1am2-nvptool-windows-0.2.2.zip` | `START-windows.bat` |
+| `wm1am2-nvptool-linux-0.2.2.zip` | `START-linux.sh` |
+
+Archive names carry the version, so an older download on your disk is
+identifiable. If you installed the helper from **0.1.0 – 0.2.1**, remove that old
+copy once before installing this one:
+
+```bash
+adb uninstall org.maniac79.nvptool
+```
+
+That removes the app only — it does **not** change the eight NVRAM values, and it
+does not undo anything. The reason is a signing-key change (see
+[docs/SIGNING.md](docs/SIGNING.md)).
 
 Extract, double-click the starter, and pick a menu option:
 
@@ -278,10 +290,12 @@ used `adb` before.
 
 ### From source
 
-The APK is signed with a pinned certificate so `adb install -r` upgrades an
-existing helper instead of failing: see [docs/SIGNING.md](docs/SIGNING.md). The
-keystore is never committed or packaged, and `build.sh` aborts if the signing
-identity changes.
+The APK is signed with a dedicated release key whose certificate is pinned in
+`tools/build.sh`, so `adb install -r` upgrades an existing helper instead of
+failing: see [docs/SIGNING.md](docs/SIGNING.md). The keystore and its password
+live outside the repository, are never committed or packaged, and are created
+once with `./tools/init_signing_key.sh`. `build.sh` stops if the keystore is
+missing or the identity changes.
 
 ```bash
 # 1. build + install the tool (one package; version is checked at runtime)

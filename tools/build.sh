@@ -43,26 +43,48 @@ echo "== packaging =="
 
 echo "== signing =="
 # Signing identity must stay stable across releases: Android only upgrades an
-# installed app when the new APK carries the SAME signing certificate. Rotating
-# the key silently would force every existing user to uninstall first.
+# installed app when the new APK carries the SAME signing certificate.
 #
-# The keystore is machine-local and MUST NOT be committed or published. It holds
-# a private key: treat it as a secret. It lives outside the repository, is never
-# copied into dist/ or any release archive, and its password is not stored here.
-KS="${NVPTOOL_KEYSTORE:-$HOME/.android/debug.keystore}"
-NL_EXPECTED_CERT_SHA256="a934c760f210a385cc0ce0f349a480c8c482ed2c9c3080896d9c6ca800255ec1"
+# This is a dedicated release key, NOT the shared Android debug key that 0.1.0
+# through 0.2.1 were signed with. Builds signed with that key cannot be upgraded
+# in place; such an install must be removed first (see docs/SIGNING.md). The key
+# lives outside the repository, is never copied into dist/, and its password is
+# never committed or printed.
+#
+#   ./tools/init_signing_key.sh     one-time: create key + password file
+#
+# Rotation is a deliberate act: change NL_EXPECTED_CERT_SHA256 below, bump
+# versionCode, announce "uninstall the old helper first", update docs/SIGNING.md.
+KS="${NVPTOOL_KEYSTORE:-$HOME/.nvptool/nvptool-release.jks}"
+PASSFILE="${NVPTOOL_KEYSTORE_PASSFILE:-$HOME/.nvptool/keystore.pass}"
+ALIAS="${NVPTOOL_KEY_ALIAS:-nvptool}"
+NL_EXPECTED_CERT_SHA256="c21c663d2171dcbd8bdc47c5bb5b2103a0fbf7aa349d7e5aebb67123de42c992"
+
 if [ ! -f "$KS" ]; then
-    mkdir -p "$(dirname "$KS")"
-    keytool -genkeypair -v -keystore "$KS" -storepass android -keypass android \
-            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
-    echo "created $KS"
+    echo "ERROR: no signing keystore at $KS" >&2
+    echo "Create one once with ./tools/init_signing_key.sh, then back it up." >&2
+    echo "Generating a fresh key here would silently change the app identity," >&2
+    echo "so this build stops instead." >&2
+    exit 1
 fi
+
+# Password from the environment first, then the 0600 file. Never as a literal on
+# the command line where other local processes could read it.
+if [ -n "${NVPTOOL_KEYSTORE_PASS:-}" ]; then
+    KS_PASS_ARG="pass:$NVPTOOL_KEYSTORE_PASS"
+elif [ -f "$PASSFILE" ]; then
+    KS_PASS_ARG="file:$PASSFILE"
+else
+    echo "ERROR: no keystore password available." >&2
+    echo "Set NVPTOOL_KEYSTORE_PASS or create $PASSFILE (see tools/init_signing_key.sh)." >&2
+    exit 1
+fi
+
 # Deterministic schemes: minSdkVersion is 28, so every supported platform
 # verifies APK Signature Scheme v3 and v1 (JAR) / v2 are unnecessary. They are
 # disabled explicitly rather than left to build-tools defaults, which differ
 # between versions and would make the output depend on the installed SDK.
-"$BT/apksigner" sign --ks "$KS" --ks-pass pass:android \
+"$BT/apksigner" sign --ks "$KS" --ks-key-alias "$ALIAS" --ks-pass "$KS_PASS_ARG" \
     --v1-signing-enabled false --v2-signing-enabled false --v3-signing-enabled true \
     out/nvptool.apk
 

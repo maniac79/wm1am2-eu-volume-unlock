@@ -9,3 +9,9 @@ dist/
 __pycache__/
 .DS_Store
 tests/host/build/
+
+# signing material - never commit a private key or its password
+*.jks
+*.keystore
+*.p12
+*.pass

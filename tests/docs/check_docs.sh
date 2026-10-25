@@ -105,6 +105,30 @@ case "$V_CODE" in ''|*[!0-9]*) bad "versionCode is not numeric ('$V_CODE')" ;; *
 # The release name in the README must point at the current version.
 if grep -qF "releases/tag/v$V_PROFILE" "$README"; then ok; else bad "README does not point at v$V_PROFILE"; fi
 
+echo "== archive names carry the current version =="
+for os in macos windows linux; do
+    name="wm1am2-nvptool-$os-$V_PROFILE.zip"
+    if grep -qF "$name" "$README"; then ok; else bad "README does not name $name"; fi
+done
+if grep -qF 'out="$d-$VER.zip"' packaging/make_release.sh; then
+    ok
+else
+    bad "make_release.sh does not build versioned archive names"
+fi
+
+echo "== the signing pin and its documentation agree =="
+PIN=$(sed -n 's/^NL_EXPECTED_CERT_SHA256="\([a-f0-9]*\)".*/\1/p' tools/build.sh | head -1)
+if [ -n "$PIN" ] && grep -qF "$PIN" docs/SIGNING.md; then
+    ok
+else
+    bad "docs/SIGNING.md does not record the pinned certificate '${PIN}'"
+fi
+if grep -qF 'a934c760f210a385cc0ce0f349a480c8c482ed2c9c3080896d9c6ca800255ec1' tools/build.sh; then
+    bad "build.sh still pins the withdrawn debug-key certificate"
+else
+    ok
+fi
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -ne 0 ]; then printf 'Failures:%s\n' "$FAILED"; exit 1; fi
