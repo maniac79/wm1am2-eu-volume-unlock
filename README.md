@@ -1,12 +1,13 @@
-# WM1AM2 EU volume cap removal (no root, no bootloader unlock)
+# WM1AM2 EU volume cap: NVRAM configuration change (experimental)
 
 Repair and interoperability tool for a Sony NW-WM1AM2 that I own.
 
 My player was sold in the EU, where the regional firmware applies a lower
 output-volume ceiling than the same hardware sold elsewhere. This tool restores
 the non-EU output-volume configuration by setting the factory NVRAM field that
-the boot process uses to choose the volume table. It also re-enables the
-**High Gain** option that the EU configuration suppresses.
+the boot process uses to choose the volume table. It also makes the
+**High Gain** toggle appear in Settings, which the EU configuration suppresses —
+whether that toggle then becomes audible is unproven (see the FAQ).
 
 No root, no bootloader unlock, no firmware modification, no Sony binaries.
 
@@ -232,8 +233,9 @@ adb reboot
 ```
 
 `tools/nvptool.sh` is the supported entry point on macOS/Linux. On Windows the
-package is currently **read-only** (status, full read, reboot) while the
-PowerShell orchestration is unvalidated — see the notice in the archive.
+package is **read-only** (status, full read, reboot): the bundled runner refuses
+write-capable classes unless forced, because it has no backup orchestration.
+See the notice in the archive.
 
 
 `Apply` prints how many of the eight fields were written and verified. Every
@@ -247,6 +249,22 @@ not an attenuation measurement, and no reproducible decode of those tables has
 been produced. Treat the size of the change as unknown until someone measures
 it properly. See section 6 of [docs/FINDINGS.md](docs/FINDINGS.md).
 
+### What the exit codes mean
+
+| code | meaning |
+|---|---|
+| 0 | complete result, all writes verified |
+| 3 | read/backup phase incomplete — **nothing written** |
+| 4 | no usable completion record: outcome **unknown** (not "unchanged") |
+| 5 | write reported a definite failure (a partial state is possible) |
+| 7 | NVRAM operation finished but temporary-setting cleanup failed — **recovery-required, not success** |
+| 11 | unsupported model or firmware |
+| 20 | backup missing, corrupt, or belonging to another device |
+| 21 | refusing a non-baseline restore without explicit consent |
+
+Only `0` is success. Scripts and menus branch on the code, never on the
+presence of output.
+
 ### Rollback
 
 ```bash
@@ -255,8 +273,12 @@ adb reboot
 ./tools/nvptool.sh status           # expect safe_volume 01000000 again
 ```
 
-Restore uses the backup taken before the write, validates its integrity,
-device serial and firmware, and refuses a corrupt or foreign file. The built-in
+Restore uses only an **original (baseline)** backup taken before a write,
+validates its integrity, device serial and firmware, and refuses a corrupt or
+foreign file. A backup of an already-modified state is labelled `snapshot`, is
+never used automatically, and needs both an explicit path and
+`NVPTOOL_ALLOW_NON_BASELINE_RESTORE=1` — restoring one returns the device to a
+modified state, not to factory. The built-in
 reference profile is a separate, clearly-marked advanced operation
 (`restore-reference`) and is *not* a substitute for a backup.
 

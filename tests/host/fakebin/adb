@@ -86,13 +86,24 @@ emit_results() {
     printf '%s\n' "$begin"
     if [ "$id" = "read" ] || [ "$id" = "restore" ]; then
         local i hex
+        local -a sv iv
+        if [ "${FAKE_PROFILE:-reference}" = "target" ]; then
+            sv=( kVolTblIcx1298HpSeGainHigh kVolTblIcx1298HpSeGainLow \
+                 kVolTblIcx1298HpBtlGainHigh kVolTblIcx1298HpBtlGainLow )
+            iv=( 1 1 1 0 )
+        else
+            sv=( kVolTblIcx1298CewHpSe kVolTblIcx1298CewHpSe \
+                 kVolTblIcx1298CewHpBtl kVolTblIcx1298CewHpBtl )
+            iv=( 0 0 0 1 )
+        fi
         for i in 0 1 2 3 4 5 6 7; do
-            case "$i" in
-                0|1) hex=$(pad_hex "${FAKE_S0:-kVolTblIcx1298CewHpSe}") ;;
-                2|3) hex=$(pad_hex "${FAKE_S2:-kVolTblIcx1298CewHpBtl}") ;;
-                4|5|6) hex="${FAKE_I4:-00000000}" ;;
-                7) hex="${FAKE_I7:-01000000}" ;;
-            esac
+            if [ "$i" -lt 4 ]; then
+                hex=$(pad_hex "${sv[$i]}")
+            elif [ "${iv[$((i - 4))]}" = "1" ]; then
+                hex="01000000"
+            else
+                hex="00000000"
+            fi
             [ "$id" = "restore" ] && hex="${FAKE_BK_HEX:-$hex}"
             if [ "$i" -lt 4 ]; then
                 printf '%s ev=field idx=%s key=%s len=256 val=%s\n' "$head" "$i" "k$i" "$hex"
@@ -122,8 +133,30 @@ handle_shell() {
         *"test -r "*)                        exit 0 ;;
         *"logcat -d"*)                       [ -f "$S/logcat" ] && cat "$S/logcat" ;;
         *"settings get global hidden_api_blacklist_exemptions"*) get_setting ;;
-        *"settings put global hidden_api_blacklist_exemptions"*) : > "$S/logcat" ;;
-        *"settings delete global hidden_api_blacklist_exemptions"*) rm -f "$S/setting" ;;
+        *"settings put global hidden_api_blacklist_exemptions"*)
+            case "$line" in
+                *'$(cat'*)   # payload install: mutates the setting
+                    printf 'NVPTOOL-PAYLOAD' > "$S/setting"
+                    : > "$S/logcat"
+                    ;;
+                *)           # restore: put the original value back
+                    v="${line#*hidden_api_blacklist_exemptions }"
+                    v="${v#\"}"; v="${v%\"}"
+                    if [ "${FAKE_SETTINGS_RESTORE_FAIL:-0}" = "1" ]; then
+                        :
+                    else
+                        printf '%s' "$v" > "$S/setting"
+                    fi
+                    ;;
+            esac
+            ;;
+        *"settings delete global hidden_api_blacklist_exemptions"*)
+            if [ "${FAKE_SETTINGS_RESTORE_FAIL:-0}" = "1" ]; then
+                :
+            else
+                rm -f "$S/setting"
+            fi
+            ;;
         *"am start"*)                        [ -f "$S/pending" ] && cat "$S/pending" >> "$S/logcat" ;;
         *)                                   : ;;
     esac

@@ -114,7 +114,18 @@ nl_require_apk() {
 }
 
 # ---------------------------------------------------------------- settings
+# The "original" value must be captured ONCE per command, before the first
+# privileged run. If each phase re-captured, a phase whose cleanup failed would
+# launder its own pollution into the next phase's "original" and the run would
+# report success with the payload still on the device.
+NL_SETTINGS_STATE=""
+NL_SETTINGS_TOUCHED=0
+NL_SETTINGS_CAPTURED=0
+
 nl_settings_capture() {
+    if [ "${NL_SETTINGS_CAPTURED:-0}" = "1" ]; then
+        return 0
+    fi
     local v
     v=$(nl_adb shell settings get global hidden_api_blacklist_exemptions 2>/dev/null | tr -d '\r')
     case "$v" in
@@ -122,8 +133,10 @@ nl_settings_capture() {
         "")      NL_SETTINGS_STATE="empty" ;;
         *)       NL_SETTINGS_STATE="value:$v" ;;
     esac
+    NL_SETTINGS_CAPTURED=1
     NL_SETTINGS_TOUCHED=0
 }
+
 
 nl_settings_restore() {
     if [ "${NL_SETTINGS_TOUCHED:-0}" -eq 0 ]; then
@@ -337,13 +350,11 @@ nl_backup_write() {   # $1 kind: baseline|snapshot
     fi
 }
 
-nl_backup_latest() {   # prints a usable backup path (baseline preferred)
-    local dir
+nl_backup_latest() {   # prints the original (baseline) backup path, or fails
+    local dir f
     dir=$(nl_backup_dir)
     if [ -f "$dir/baseline.conf" ]; then printf '%s/baseline.conf' "$dir"; return 0; fi
-    local f
     f=$(ls -1t "$dir"/*-baseline-*.conf 2>/dev/null | head -1)
-    [ -z "$f" ] && f=$(ls -1t "$dir"/*-snapshot-*.conf 2>/dev/null | head -1)
     [ -n "$f" ] || return 1
     printf '%s' "$f"
 }
@@ -400,3 +411,21 @@ nl_journal() {   # $1 phase, $2 detail
         >> "$dir/journal.log" 2>/dev/null || true
 }
 
+
+# A leftover payload setting means this run did not leave the device clean.
+# That is a recovery-required state: never report it as success.
+nl_require_cleanup() {   # $1 = operation label
+    if [ "${NL_CLEANUP_OK:-1}" = "1" ]; then
+        return 0
+    fi
+    nl_journal "cleanup-failed" "op=$1"
+    nl_die "$1: the NVRAM operation itself finished, but the temporary setting
+hidden_api_blacklist_exemptions could NOT be restored. This is a
+recovery-required state, not a clean success.
+
+  Check:    adb shell settings get global hidden_api_blacklist_exemptions
+  Expected: null (stock) or your original value
+  Original: ${NL_SETTINGS_STATE:-unknown}
+
+Do not treat the player as clean until that matches." 7
+}

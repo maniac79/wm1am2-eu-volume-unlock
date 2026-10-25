@@ -45,6 +45,16 @@ public final class Apply {
             return;
         }
 
+        // The host only computes this digest after it has written and verified a
+        // backup. Requiring it means "no backup, no write" is structurally true,
+        // not merely a convention the caller is trusted to follow.
+        if (expect == null || expect.length() != 64 || !isHex(expect)) {
+            r.note("state_digest_required");
+            r.summary(Result.REFUSED, "preflight", 0, 0, Profile.COUNT, "missing_state_digest");
+            System.exit(Result.EXIT_REFUSED);
+            return;
+        }
+
         byte[][] cur = new byte[Profile.COUNT][];
         for (int i = 0; i < Profile.COUNT; i++) {
             try {
@@ -133,5 +143,12 @@ public final class Apply {
 
         r.summary(status, "write", written, verified, Profile.COUNT, reason);
         System.exit(Result.exitFor(status));
+    }
+
+    private static boolean isHex(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.digit(s.charAt(i), 16) < 0) return false;
+        }
+        return true;
     }
 }

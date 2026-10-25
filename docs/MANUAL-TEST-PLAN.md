@@ -33,7 +33,17 @@ fingerprint `SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys`.
 - [ ] The backup file appears under `~/.nvptool/backups/<serial>/` and its
       recorded lengths are 256/256/256/256/4/4/4/4.
 - [ ] A second `read` does not overwrite `baseline.conf`.
-- [ ] On a stock unit the backup is classified `kind=baseline`.
+
+**Expected on the owner's unit:** it is *already modified*, so the first read
+will classify as `kind=snapshot` and **no `baseline.conf` will be created**.
+That is correct behaviour, and it has a consequence:
+
+- [ ] `nvptool.sh restore` refuses with "no original (baseline) backup" (exit 20).
+- [ ] `nvptool.sh restore <snapshot>` refuses without
+      `NVPTOOL_ALLOW_NON_BASELINE_RESTORE=1` (exit 21).
+- [ ] Conclusion recorded: on this device the only route back is
+      `restore-reference`, because the true factory values were never captured
+      before the first modification.
 
 ## 3. Apply
 

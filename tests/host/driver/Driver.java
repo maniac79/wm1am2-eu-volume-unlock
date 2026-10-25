@@ -33,6 +33,18 @@ public final class Driver {
         final String[] rest = new String[args.length - 2];
         System.arraycopy(args, 2, rest, 0, rest.length);
 
+        // "@DIGEST" expands to the digest of the mock's current state, exactly as
+        // the host would compute it after writing a backup.
+        for (int i = 0; i < rest.length; i++) {
+            if ("@DIGEST".equals(rest[i])) {
+                byte[][] cur = new byte[IProperties.KEYS.length][];
+                for (int k = 0; k < cur.length; k++) {
+                    cur[k] = IProperties.getRaw(IProperties.KEYS[k]);
+                }
+                rest[i] = org.maniac79.nvptool.Profile.digest(cur);
+            }
+        }
+
         Runtime.getRuntime().addShutdownHook(new Thread() {
             public void run() {
                 System.out.println("DRIVER op=" + op

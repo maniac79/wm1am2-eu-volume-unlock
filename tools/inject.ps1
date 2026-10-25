@@ -15,10 +15,24 @@ param(
     [int]$RunUid = 1000,
     [string]$Seinfo = 'platform:targetSdkVersion=29:complete',
     [string]$Hal = '/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk',
-    [int]$WaitSeconds = 20
+    [int]$WaitSeconds = 20,
+    # Write-capable classes are refused by default. This runner has no backup
+    # orchestration, so allowing a write from here would bypass "backup first".
+    [switch]$AllowUnsafeWrite
 )
 
 $ErrorActionPreference = 'Stop'
+
+$writeClasses = @(
+    'org.maniac79.nvptool.Apply',
+    'org.maniac79.nvptool.RestoreField',
+    'org.maniac79.nvptool.RestoreReference'
+)
+if (($writeClasses -contains $ClassName) -and (-not $AllowUnsafeWrite)) {
+    Write-Error ("refusing to run write-capable class '$ClassName': this runner takes no " +
+                 'backup. Use the macOS/Linux tool (nvptool.sh) for writes.')
+    exit 3
+}
 $Tag = 'NVPTOOL'
 $Remote = '/data/local/tmp/nvptool_payload.txt'
 

@@ -55,40 +55,49 @@ O=$(run "factory,short:0" read R4)
 t "field length refused"     "reason=field_length_0"       "$O"
 
 echo "== apply =="
-O=$(run factory apply R5)
+O=$(run factory apply R5 @DIGEST)
 t "apply ok"                 "status=OK"                   "$O"
 t "apply writes 8"           "written=8"                   "$O"
 t "apply verified 8"         "verified=8"                  "$O"
 t "apply effective writes"   "writes=8"                    "$O"
 
-O=$(run target apply R6)
+O=$(run target apply R6 @DIGEST)
 t "re-apply noop"            "reason=already_applied"      "$O"
 t "re-apply zero writes"     "writes=0"                    "$O"
 
-O=$(run corrupt:2 apply R7)
+O=$(run corrupt:2 apply R7 @DIGEST)
 t "unrecognised value"       "reason=unrecognized_value_2" "$O"
 t "unrecognised no write"    "writes=0"                    "$O"
 
 O=$(run nohal apply R8)
 t "hal unavailable"          "reason=hal_unavailable"      "$O"
 
-O=$(run partial:3 apply R9)
+O=$(run partial:3 apply R9 @DIGEST)
 t "partial state accepted"   "status=OK"                   "$O"
 t "partial writes only rest" "written=5"                   "$O"
 
+echo "== a write without a backup digest is refused =="
+O=$(run factory apply R20)
+t "digest is mandatory"     "reason=missing_state_digest" "$O"
+t "no digest, no write"     "writes=0"                    "$O"
+
+O=$(run factory apply R21 not-a-digest)
+t "bad digest refused"      "reason=missing_state_digest" "$O"
+t "bad digest, no write"    "writes=0"                    "$O"
+
 echo "== digest binding =="
-O=$(run factory apply R10 deadbeef)
+O=$(run factory apply R10 0000000000000000000000000000000000000000000000000000000000000000)
 t "digest mismatch aborts"   "reason=state_changed_since_backup" "$O"
 t "digest mismatch no write" "writes=0"                    "$O"
 
 echo "== partial write handling =="
-O=$(run "factory,failset:2" apply R11)
+O=$(run "factory,failset:2" apply R11 @DIGEST)
 t "stops on write failure"   "reason=write_failed_2"       "$O"
 t "status incomplete"        "status=INCOMPLETE"           "$O"
 t "only earlier fields"      "writes=2"                    "$O"
 t "no writes after failure"  "setCalls=3"                  "$O"
 
-O=$(run "factory,ignoreset:2" apply R12)
+O=$(run "factory,ignoreset:2" apply R12 @DIGEST)
 t "verify failure detected"  "reason=verify_failed_2"      "$O"
 t "verify failure no effect" "writes=2"                    "$O"
 

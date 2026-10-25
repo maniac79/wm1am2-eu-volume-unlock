@@ -25,7 +25,7 @@ newenv() {
     export TMPDIR="$T/tmp"
     mkdir -p "$FAKE_STATE_DIR" "$TMPDIR"
     export PATH="$FAKEBIN:$PATH"
-    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL 2>/dev/null || true
+    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE 2>/dev/null || true
 }
 
 nv() {   # nv <args...> ; sets OUT and RC
@@ -161,6 +161,35 @@ nv apply
 expect_rcnz "concurrent run blocked" "$RC"
 expect_has "lock explained" "another nvptool run is active" "$OUT"
 rm -rf "${TMPDIR:-/tmp}/nvptool.lock.SER123"
+
+echo "== already-modified device is never labelled factory =="
+newenv; export FAKE_PROFILE=target; nv read
+expect_rc "read on modified device" 0 "$RC"
+BK=$(ls "$NVPTOOL_BACKUP_DIR"/*/baseline.conf 2>/dev/null | head -1)
+if [ -z "$BK" ]; then ok; else bad "modified device produced a baseline.conf"; fi
+SNAP=$(ls "$NVPTOOL_BACKUP_DIR"/*/*-snapshot-*.conf 2>/dev/null | head -1)
+[ -n "$SNAP" ] && ok || bad "modified device did not record a snapshot"
+if [ -n "$SNAP" ]; then
+    expect_has "snapshot labelled" "kind=snapshot" "$(cat "$SNAP")"
+fi
+
+nv restore
+expect_rc "restore without baseline refuses" 20 "$RC"
+expect_has "refusal explains snapshot" "not a factory backup" "$OUT"
+
+if [ -n "$SNAP" ]; then
+    nv restore "$SNAP"
+    expect_rc "explicit snapshot needs consent" 21 "$RC"
+fi
+
+echo "== cleanup failure is not success =="
+newenv; export FAKE_SETTINGS_RESTORE_FAIL=1; nv apply
+expect_rc "cleanup failure rc" 7 "$RC"
+expect_hasnt "no success claim on cleanup failure" "apply OK" "$OUT"
+expect_has "recovery state stated" "recovery-required" "$OUT"
+
+newenv; export FAKE_SETTINGS_RESTORE_FAIL=1; nv read
+expect_rc "read cleanup failure rc" 7 "$RC"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

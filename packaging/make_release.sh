@@ -19,6 +19,12 @@ fi
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
+# Provenance stamped into every archive so an artifact can be tied to a commit.
+COMMIT=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
+if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null | head -1)" ]; then
+    COMMIT="$COMMIT+dirty"
+fi
+
 sha_line() {   # emit "<hash>  <name>" for one file
     local f="$1"
     if command -v sha256sum >/dev/null 2>&1; then
@@ -44,6 +50,13 @@ common_files() {   # $1 = target dir
     cp "$ROOT/LICENSE"              "$d/"
     cp "$COMMON/QUICKSTART.txt"     "$d/"
     cp "$APK"                       "$d/"
+    {
+        printf 'commit=%s\n' "$COMMIT"
+        printf 'tool=%s\n' "$(sed -n 's/.*TOOL_VERSION = "\([^"]*\)".*/\1/p' \
+            "$ROOT/src/org/maniac79/nvptool/Profile.java" | head -1)"
+        printf 'built=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'apk_sha256=%s\n' "$(sha_line "$APK" | cut -d' ' -f1)"
+    } > "$d/SOURCE-COMMIT.txt"
 }
 
 # ---------------- macOS ----------------

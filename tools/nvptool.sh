@@ -94,6 +94,7 @@ nl_cmd_read() {
     kind=$(nl_classify)
     nl_backup_write "$kind"
     nl_backup_load "$NL_BACKUP_FILE"
+    nl_require_cleanup "read"
     nl_journal "read-ok" "kind=$kind"
     printf 'read OK (%s configuration)\nbackup: %s\n' "$kind" "$NL_BACKUP_FILE"
 }
@@ -138,9 +139,10 @@ Recovery: 'nvptool.sh read' and compare against
     }
 
     if [ "$NL_STATUS" = "OK" ]; then
+        # A leftover payload setting is a recovery-required state, not a success.
+        nl_require_cleanup "apply"
         nl_journal "apply-ok" "written=$NL_WRITTEN verified=$NL_VERIFIED cleanup=$NL_CLEANUP_OK"
         printf 'apply OK - %s/%s verified (wrote %s)\n' "$NL_VERIFIED" "$NL_TOTAL" "$NL_WRITTEN"
-        [ "${NL_CLEANUP_OK:-1}" = "1" ] || nl_warn "temporary setting cleanup FAILED - check hidden_api_blacklist_exemptions manually"
         printf 'backup: %s\n' "$NL_BACKUP_FILE"
         printf 'Reboot for the change to take effect.\n'
         return 0
@@ -153,7 +155,7 @@ Recovery: 'nvptool.sh read', then 'nvptool.sh restore'
 }
 
 nl_cmd_restore() {
-    local file="${1:-}"
+    local file="${1:-}" kind
     nl_select_device
     nl_lock_acquire
     nl_preflight
@@ -161,15 +163,32 @@ nl_cmd_restore() {
     nl_mktempdir
 
     [ -n "$file" ] || file=$(nl_backup_latest) || \
-        nl_die "no backup found; run 'nvptool.sh read' first" 20
-    nl_backup_load "$file"
-    printf 'restoring from: %s\n' "$file"
+        nl_die "no original (baseline) backup found for this device.
+A backup of an already-modified state is not a factory backup. Options:
+  - restore the built-in reference profile:  nvptool.sh restore-reference
+  - or pass an explicit file plus NVPTOOL_ALLOW_NON_BASELINE_RESTORE=1" 20
 
-    local i run
+    nl_backup_load "$file"
+    kind=$(sed -n 's/^kind=//p' "$file" | head -1)
+
+    if [ "$kind" != "baseline" ]; then
+        printf 'WARNING: this backup is kind=%s, not a factory baseline.\n' "$kind"
+        printf '         Restoring it returns the device to an ALREADY MODIFIED state.\n'
+        if [ "${NVPTOOL_ALLOW_NON_BASELINE_RESTORE:-0}" != "1" ]; then
+            nl_journal "restore-refused" "kind=$kind"
+            nl_die "refusing to restore a non-baseline backup without explicit consent.
+Re-run with NVPTOOL_ALLOW_NON_BASELINE_RESTORE=1 if that is really what you want." 21
+        fi
+    fi
+
+    printf 'restoring from: %s (kind=%s)\n' "$file" "$kind"
+
+    local i run cleanup_fail=0
     for i in 0 1 2 3 4 5 6 7; do
         run="$(date +%s)-$$-$RANDOM"
         nl_journal "restore-start" "field=$i"
         nl_inject "org.maniac79.nvptool.RestoreField" "restore" "$run" "$i" "${NL_BK_HEX[$i]}" >/dev/null
+        [ "${NL_CLEANUP_OK:-1}" = "1" ] || cleanup_fail=1
         if [ "${NL_INJECT_RC:-1}" = "3" ]; then
             nl_journal "restore-unknown" "field=$i"
             nl_die "field $i: no completion record, outcome UNKNOWN. Re-run 'nvptool.sh read'." 4
@@ -181,8 +200,11 @@ nl_cmd_restore() {
         nl_journal "restore-field-ok" "field=$i reason=$NL_REASON"
         printf '  field %s: %s\n' "$i" "$NL_REASON"
     done
-    nl_journal "restore-ok" "file=$file"
-    printf 'restore OK - reboot to reload the original table.\n'
+
+    [ "$cleanup_fail" = "0" ] || NL_CLEANUP_OK=0
+    nl_require_cleanup "restore"
+    nl_journal "restore-ok" "file=$file kind=$kind"
+    printf 'restore OK (%s) - reboot to reload the table for these values.\n' "$kind"
 }
 
 nl_cmd_restore_reference() {
