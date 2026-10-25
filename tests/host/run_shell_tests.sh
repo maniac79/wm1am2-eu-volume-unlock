@@ -28,7 +28,7 @@ newenv() {
     printf 'trusted-mock-apk\n' > "$NVPTOOL_APK"
     printf 'apk_sha256=%s\n' "$(shasum -a 256 "$NVPTOOL_APK" | cut -d' ' -f1)" > "$T/SOURCE-COMMIT.txt"
     export PATH="$FAKEBIN:$PATH"
-    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK FAKE_DUP_LATE FAKE_PID FAKE_PID2 2>/dev/null || true
+    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK FAKE_DUP_LATE FAKE_PID FAKE_PID2 FAKE_NO_CLAIM FAKE_DUP_SKIPPED 2>/dev/null || true
     # The write paths are on a safety hold, so the suites exercise their logic
     # behind the documented bypass. The hold itself is tested on its own.
     export NVPTOOL_ALLOW_UNVALIDATED_WRITE=1
@@ -339,6 +339,17 @@ expect_rcnz "duplicate execution is rejected" "$RC"
 expect_hasnt "duplicate execution is not reported as success" "read OK" "$OUT"
 if printf '%s' "$OUT" | grep -qE 'bad_begin_count|bad_summary_count'; then ok; else bad "duplicate execution does not name the defect"; fi
 : > "$FAKE_STATE_DIR/calls.log"
+
+echo "== a run without the claim record is rejected =="
+newenv; export FAKE_NO_CLAIM=1; nv read
+expect_rc "missing claim rc" 3 "$RC"
+expect_has "missing guard named" "no_guard" "$OUT"
+expect_hasnt "missing claim no success" "read OK" "$OUT"
+
+echo "== a claimed-out duplicate is reported, not fatal =="
+newenv; export FAKE_DUP_SKIPPED=1; nv read
+expect_rc "claimed duplicate rc" 0 "$RC"
+expect_has "duplicate is counted" "claimed out" "$OUT"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

@@ -287,6 +287,7 @@ and it is then entirely at your own risk." 13
 # --------------------------------------------------------- privileged run
 NL_REMOTE_PAYLOAD=""
 NL_SETTLE_SECS="${NVPTOOL_SETTLE_SECS:-3}"
+NL_CLAIM_DIR="/data/local/tmp/nvptool-claims"
 NL_REMOTE_FILE_CLEANUP_ATTEMPTED=0
 NL_INJECT_RC=1
 NL_CLEANUP_OK=1
@@ -319,6 +320,14 @@ nl_inject() {   # nl_inject <class> <op> <runid> [tool args...]
 
     nl_build_payload "$cls" "$run" "$apk" "$@"
 
+    # Claim area: created by the shell user so the payload needs no directory
+    # write permission of its own. Without it the payload refuses to touch the
+    # HAL, because one request could otherwise execute more than once.
+    nl_adb shell "mkdir -p $NL_CLAIM_DIR && chmod 0777 $NL_CLAIM_DIR" >/dev/null 2>&1 || \
+        nl_die "could not prepare the claim directory (settings untouched)"
+    nl_adb shell "touch $NL_CLAIM_DIR/lock-$run && chmod 0666 $NL_CLAIM_DIR/lock-$run" >/dev/null 2>&1 || \
+        nl_die "could not prepare the claim lock file (settings untouched)"
+
     nl_settings_capture
     nl_record_recovery "$run" "$op"
     nl_adb push "$NL_RUN_DIR/payload.txt" "$NL_REMOTE_PAYLOAD" >/dev/null 2>&1 \
@@ -347,6 +356,7 @@ nl_inject() {   # nl_inject <class> <op> <runid> [tool args...]
     NL_REMOTE_FILE_CLEANUP_ATTEMPTED=1
     nl_settings_restore || setting_clean=0
     nl_adb shell "rm -f $NL_REMOTE_PAYLOAD" >/dev/null 2>&1 || file_clean=0
+    nl_adb shell "rm -f $NL_CLAIM_DIR/claim-$run-* $NL_CLAIM_DIR/lock-$run" >/dev/null 2>&1 || file_clean=0
     [ "$file_clean" = 1 ] && NL_REMOTE_PAYLOAD=""
 
     # Bounded wait for the first summary, then a settle window, then ONE final
@@ -390,6 +400,7 @@ NL_VERIFIED=""
 NL_TOTAL=""
 NL_REASON=""
 NL_FIELDS=0
+NL_DUPLICATES=0
 
 nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
     local op="$1" run="$2" f="$NL_RUN_DIR/result.txt"
@@ -435,6 +446,18 @@ nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
         OK|ABORT|REFUSED|INCOMPLETE|FATAL) ;;
         *) NL_PARSE_ERR="bad_status"; return 3 ;;
     esac
+
+    # A successful run must record a single-execution guard. A REFUSED run is
+    # allowed through so the payload can report why it declined (for example
+    # no_single_execution_guard); it is never treated as success.
+    if [ "$NL_STATUS" = "OK" ] && ! grep -qE 'msg=(claim_acquired|disarm_ok)' "$f"; then
+        NL_PARSE_ERR="no_guard"; return 3
+    fi
+    NL_DUPLICATES=$(grep -c 'msg=duplicate_skipped' "$f" || true)
+    [ "$NL_DUPLICATES" = "0" ] || \
+        printf 'note: %s duplicate execution(s) were claimed out and did no work
+' \
+            "$NL_DUPLICATES" >&2
 
     if [ "$op" = "read" ]; then
         [ "$NL_FIELDS" = "8" ] || { NL_PARSE_ERR="field_count_$NL_FIELDS"; return 3; }

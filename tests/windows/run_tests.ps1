@@ -80,7 +80,7 @@ function New-Env {
                      'FAKE_SETTINGS_RESTORE_FAIL', 'FAKE_SETTINGS_GET_FAIL',
                      'FAKE_SETTINGS_LIST_FAIL', 'FAKE_START_FAIL', 'FAKE_APP_MISSING',
                      'FAKE_INSTALLED_APK', 'FAKE_PULL_FAIL', 'FAKE_INSTALL_FAIL',
-                     'NVPTOOL_SERIAL', 'FAKE_DUP_LATE', 'FAKE_PID', 'FAKE_PID2',
+                     'NVPTOOL_SERIAL', 'FAKE_DUP_LATE', 'FAKE_PID', 'FAKE_PID2', 'FAKE_NO_CLAIM', 'FAKE_DUP_SKIPPED',
                      'NVPTOOL_ALLOW_UNVALIDATED_WRITE',
                      'NVPTOOL_ALLOW_NON_BASELINE_RESTORE')) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
@@ -380,6 +380,19 @@ $r = Run-Nv @('read')
 Check 'duplicate execution is rejected' ($r.Rc -ne 0)
 Check 'duplicate execution is not reported as success' (-not ($r.Out -match 'read OK'))
 Check 'duplicate execution names the defect' ($r.Out -match 'begin x2|summary x2|two processes')
+
+Write-Host '== a run without the claim record is rejected =='
+[void](New-Env); $env:FAKE_NO_CLAIM = '1'
+$r = Run-Nv @('read')
+Check 'missing claim rc 4' ($r.Rc -eq 4)
+Check 'missing guard named' ($r.Out -match 'single-execution guard')
+Check 'missing claim no success' (-not ($r.Out -match 'read OK'))
+
+Write-Host '== a claimed-out duplicate is reported, not fatal =='
+[void](New-Env); $env:FAKE_DUP_SKIPPED = '1'
+$r = Run-Nv @('read')
+Check 'claimed duplicate rc 0' ($r.Rc -eq 0)
+Check 'duplicate is counted' ($r.Out -match 'claimed out')
 
 Write-Host ''
 Write-Host "PASS=$($script:Pass) FAIL=$($script:Fail)"

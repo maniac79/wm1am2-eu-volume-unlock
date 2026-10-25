@@ -49,6 +49,8 @@ function New-ResultLines([string]$Payload) {
     $out = @()
     if ($resp -eq 'noout') { return $out }
     $out += "$head ev=begin"
+    if ($env:FAKE_NO_CLAIM -ne '1') { $out += "$head ev=note msg=claim_acquired mode=file" }
+    if ($env:FAKE_DUP_SKIPPED -eq '1') { $out += "$head ev=note msg=duplicate_skipped" }
     if ($resp -eq 'truncated') { return $out }
     if ($op -eq 'read' -or $op -eq 'restore') {
         $target = ($env:FAKE_PROFILE -eq 'target')

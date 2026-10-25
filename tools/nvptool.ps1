@@ -296,6 +296,14 @@ function Invoke-NvpClass {
     $file = New-Payload -Class $Class -RunId $RunId -Extra $Extra
     Capture-Settings
     if ((Read-SettingsState) -ne 'absent') { Fail 'settings changed before phase' }
+    # Claim area: created by the shell user, so the payload needs no directory
+    # write permission of its own. Without it the payload refuses to touch the
+    # HAL, because one request could otherwise execute more than once.
+    $claimDir = '/data/local/tmp/nvptool-claims'
+    $mk = Invoke-Adb '-s' $script:Serial 'shell' "mkdir -p $claimDir && chmod 0777 $claimDir"
+    if ($mk.Code -ne 0) { Fail 'could not prepare the claim directory (settings untouched)' }
+    $lk = Invoke-Adb '-s' $script:Serial 'shell' "touch $claimDir/lock-$RunId && chmod 0666 $claimDir/lock-$RunId"
+    if ($lk.Code -ne 0) { Fail 'could not prepare the claim lock file (settings untouched)' }
     # The run id is generated internally and contains only digits and hyphens.
     $remote = "/data/local/tmp/nvptool-$RunId-$Op.txt"
     $script:RemotePayloads += $remote
@@ -323,6 +331,7 @@ function Invoke-NvpClass {
         $removedEarly = Invoke-Adb '-s' $script:Serial 'shell' "rm -f $remote"
         if ($removedEarly.Code -eq 0) { $script:RemotePayloads = @($script:RemotePayloads | Where-Object { $_ -ne $remote }) }
         else { $script:CleanupOk = $false }
+        [void](Invoke-Adb '-s' $script:Serial 'shell' "rm -f $claimDir/claim-$RunId-* $claimDir/lock-$RunId")
 
         $lines = @()
         for ($i = 0; $i -lt 20; $i++) {
@@ -408,6 +417,18 @@ function Assert-Result {
     if (@('OK', 'ABORT', 'REFUSED', 'INCOMPLETE', 'FATAL') -notcontains $status) {
         Fail "malformed result (status '$status'): outcome UNKNOWN" 4
     }
+
+    # At least one single-execution guard must be recorded: an exclusive claim or
+    # a verified disarm of the exemption. Without either, a second fork could
+    # have executed as well.
+    # A successful run must record a single-execution guard. A REFUSED run is let
+    # through so the payload can report why it declined; it is never success.
+    if ($status -eq 'OK' -and
+        -not ($lines | Where-Object { $_ -match 'msg=(claim_acquired|disarm_ok)' })) {
+        Fail 'no single-execution guard recorded' 4
+    }
+    $dup = @($lines | Where-Object { $_ -match 'msg=duplicate_skipped' }).Count
+    if ($dup -gt 0) { Write-Host "note: $dup duplicate execution(s) were claimed out and did no work" }
 
     $fields = @($lines | Where-Object { $_ -match 'ev=field' })
     if ($Op -eq 'read') {

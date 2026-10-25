@@ -157,3 +157,64 @@ approach A implemented and showing `SKIPPED` (not `OK`) for the loser executions
 in steps 3 and 4. A delay, an ABI filter or a file lock alone is not sufficient
 proof; the claim must be atomic, owned by the right UID, and permitted by the
 payload's own SELinux domain.
+
+## 7. Hardware measurements (2026-10-25, NW-WM1AM2, firmware 1.09.00)
+
+Three privileged reads were run on the owner's device, each with writes held and
+no NVRAM modification (`written=0` in every summary). All three are evidence, not
+inference.
+
+**A - claim only.** Two executions (pids 5521, 5590, 0.53 s apart). Both logged
+`claim_unavailable` and `REFUSED phase=preflight`; neither touched the HAL. The
+claim directory was `0777 shell:shell u:object_r:shell_data_file:s0`, so the
+payload's own domain cannot create there, and the `FileLock` fallback failed as
+well. **Approach A is not viable on this filesystem.** The host refused the run
+(`bad_begin_count`), which is the intended fail-closed behaviour.
+
+**B - claim + self-disarm.** The disarm itself **works**: the first execution
+deleted the setting and verified `null`. It did not stop the second execution:
+
+```
+12:11:45.061 pid=1606 summary status=OK
+12:11:45.624 pid=1693 note msg=disarm_ok      <- setting deleted, verified null
+12:11:45.637 pid=1693 summary status=OK
+12:11:45.106 ZygoteProcess: Failed to set API blacklist exemptions; status 1657
+12:11:45.667 ZygoteProcess: Failed to set API blacklist exemptions; status 1667
+```
+
+Deleting the *setting* does not revoke the copy **cached inside Zygote**: the
+release travels through `setApiBlacklistExemptions`, which fails with a child pid
+as its status - the same reply/PID desynchronisation as before, now blocking the
+release instead of the arming. So approach A's intended mechanism cannot work
+from the payload side on this firmware.
+
+**C - linger (retry-suppression).** Hypothesis: the duplicate is ActivityManager
+retrying a start whose process died, so keeping the child alive should remove it.
+The retry timing was confirmed and the prevention was not:
+
+```
+12:17:18.835 pid=4440 begin ... summary      <- execution 1, then linger 8 s
+12:17:27.534 pid=4540 begin ... summary      <- execution 2, exactly on its exit
+```
+
+While the child lives there is no retry; the moment it exits, ActivityManager
+retries and Zygote - still holding the stale exemption - executes the payload
+again. Worse, that second execution landed **after** the host's settle window, so
+the host reported success (exit 0) while a duplicate happened. This variant was
+reverted; it hides the defect instead of fixing it.
+
+**Conclusion.** On this firmware, with this technique, one armed request costs
+exactly two executions, and no payload-side or host-side timing trick can prevent
+the second: the exemption lives in Zygote's memory, it can only be replaced by a
+call the payload's own fork breaks, and it cannot be cleared by deleting the
+setting. Every run therefore also leaves Settings without a process until a
+reboot, because the retried start is what replaces it.
+
+**Consequences for the tool (current state).** The payload requires a claim, which
+this filesystem does not provide, so every privileged run now refuses at
+`preflight` and reaches no HAL. `status` works; `read` reports the refusal; all
+NVRAM writes stay held. That is fail-closed, not a fix.
+
+**What would still change the outcome**: a claim medium the payload can write
+(not on `/data/local/tmp` here), or a trigger that ActivityManager never retries.
+Both are open questions; neither can be settled by another read.

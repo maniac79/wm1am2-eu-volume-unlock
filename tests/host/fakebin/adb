@@ -88,6 +88,13 @@ emit_results() {
     esac
 
     printf '%s\n' "$begin"
+    # Claim records: the winner reports how it claimed, and a claimed-out
+    # duplicate reports that it did nothing.
+    if [ "${FAKE_NO_CLAIM:-0}" != "1" ]; then
+        printf '%s ev=note msg=claim_acquired mode=file\n' "$head"
+    fi
+    [ "${FAKE_DUP_SKIPPED:-0}" = "1" ] && \
+        printf '%s ev=note msg=duplicate_skipped\n' "$head"
     if [ "$id" = "read" ] || [ "$id" = "restore" ]; then
         local i hex
         local -a sv iv

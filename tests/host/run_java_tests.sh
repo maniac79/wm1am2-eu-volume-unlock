@@ -13,6 +13,12 @@ SRC=$(find src tests/host/stubs tests/host/mock tests/host/driver -name '*.java'
 javac -nowarn -d "$OUT" $SRC 2>&1 || { echo "COMPILE FAILED"; exit 1; }
 
 CP="$OUT"
+# The payload takes an exclusive claim before touching the HAL. On the host that
+# needs a writable directory, otherwise every run correctly refuses.
+export NVPTOOL_CLAIM_DIR="${TMPDIR:-/tmp}/nvptool-java-claims.$$"
+export NVPTOOL_LINGER_MS=0   # no need to wait on the host: there is no AMS here
+mkdir -p "$NVPTOOL_CLAIM_DIR"
+trap 'rm -rf "$NVPTOOL_CLAIM_DIR"' EXIT
 PASS=0
 FAIL=0
 FAILED=""

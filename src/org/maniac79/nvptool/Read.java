@@ -13,8 +13,39 @@ public final class Read {
 
     public static void main(String[] args) {
         String runId = args.length > 0 ? args[0] : "-";
+
+        // One request, one execution. Two guards, at least one must hold:
+        //   1. an exclusive claim, where the filesystem allows it;
+        //   2. deleting the exemption itself, which removes the source of any
+        //      later execution. Verified by reading the value back.
+        Claim claim = Claim.acquire(runId, "read");
         Result r = new Result(runId, "read");
+        if (claim.mode != null && !claim.won) {
+            // Another process owns this request: do no work, and emit only a note
+            // so the host's single-record invariants stay intact.
+            r.note("duplicate_skipped");
+            System.exit(Result.EXIT_OK);
+            return;
+        }
+        if (claim.mode == null) {
+            // No usable claim medium here; the disarm below is the only guard.
+            r.note("claim_unavailable");
+        }
+
         r.begin();
+        if (claim.mode != null) {
+            r.note("claim_acquired mode=" + claim.mode);
+        }
+        if (claim.mode == null) {
+            // No claim medium on this filesystem, and deleting the setting does
+            // not revoke Zygote's cached copy (measured on hardware), so the
+            // single-execution property cannot be guaranteed. Refuse instead of
+            // guessing.
+            r.summary(Result.REFUSED, "preflight", 0, 0, Profile.COUNT,
+                    "no_single_execution_guard");
+            System.exit(Result.EXIT_REFUSED);
+            return;
+        }
 
         String env = Profile.checkEnvironment();
         if (env != null) {
