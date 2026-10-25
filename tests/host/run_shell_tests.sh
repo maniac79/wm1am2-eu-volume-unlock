@@ -360,6 +360,12 @@ expect_rc "apply with aborting duplicate rc" 0 "$RC"
 expect_has "apply still reports verified" "apply OK" "$OUT"
 expect_has "apply states the reboot step" "REBOOT REQUIRED" "$OUT"
 
+echo "== a duplicated restore-reference is accepted when benign =="
+newenv; export FAKE_DUP_ABORT=1; nv restore-reference
+expect_rc "restore-reference with duplicate rc" 0 "$RC"
+expect_has "restore-reference still reports verified" "reference profile restored" "$OUT"
+expect_has "restore-reference states the reboot step" "REBOOT REQUIRED" "$OUT"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -ne 0 ]; then printf 'Failures:%s\n' "$FAILED"; exit 1; fi

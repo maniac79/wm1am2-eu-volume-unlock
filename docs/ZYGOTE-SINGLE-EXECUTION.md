@@ -110,7 +110,7 @@ that is what A adds, and it is why the hold stays.
 | Disarm before collecting | `tools/lib.sh`, `tools/nvptool.ps1` | Cuts the arming window from the whole poll loop to one round trip: removes the seconds in which ActivityManager retried |
 | Settle window + single final read | same | The snapshot now covers the window in which a late duplicate lands - the exact case that was invisible |
 | Reject >1 begin, >1 summary, pid mismatch | `nl_parse`, `Assert-Result` | The "one execution" rule is now applied to the whole window instead of the first summary |
-| Write hold, exit 13 | `nl_require_write_enabled`, `Assert-WriteEnabled` | A duplicate read wastes work; a duplicate write is an unbounded number of NVRAM operations |
+| Write hold, exit 13 (removed in 0.2.4) | `nl_require_write_enabled`, `Assert-WriteEnabled` | A duplicate read wastes work; a duplicate write is an unbounded number of NVRAM operations. Superseded by the per-boot procedure in section 10 |
 
 It still does not make the payload single-shot. A retry that lands inside the
 disarm round trip can still execute twice; that is detected and refused, not
@@ -152,7 +152,7 @@ watching Settings.
 | 6 | open Settings normally afterwards | UI renders, no white screen | white screen -> stop, reboot, report |
 | 7 | post-run audit | setting absent, payload and lock removed, recovery record closed, eight NVRAM values unchanged vs the pre-run read | any residue |
 
-Lifting the write hold requires: steps 2-7 passing twice on this build, **and**
+Lifting the write hold required: steps 2-7 passing twice on this build, **and**
 approach A implemented and showing `SKIPPED` (not `OK`) for the loser executions
 in steps 3 and 4. A delay, an ABI filter or a file lock alone is not sufficient
 proof; the claim must be atomic, owned by the right UID, and permitted by the
@@ -282,9 +282,9 @@ cost instead of hiding it.
 
 **What is still refused**
 
-- `apply`, `restore`, `restore-reference`: unchanged write hold (exit 13). A
-  duplicate write is idempotent per field, but the result could not be verified
-  in the same boot, since verification needs an app start.
+- `apply`, `restore`, `restore-reference`: enabled again from 0.2.4, under the
+  per-boot procedure below. A duplicate write is idempotent per field, and the
+  digest-bound apply path makes a second writer abort instead of writing twice.
 
 **Why this is honest rather than convenient**
 
@@ -327,3 +327,40 @@ end to end, with no NVRAM change because the values were already in place.
 
 Still true and unfixed: the Settings screen stays broken until that reboot. It is
 now a documented step instead of a surprise.
+
+## 11. Hardware re-test (0.2.5 pass): three corrections and one confirmation
+
+Run on the same unit with the packaged 0.2.4 macOS archive, after 0.2.4 shipped.
+
+**A. `restore` from the device's own baseline works.** After the earlier `apply`
+recorded a `baseline`, `restore` rewrote all eight fields and the cap returned
+(`vendor.safe_volume.enabled = 01000000` after reboot). `baseline.conf` holds the
+stock values (gain flags `00000000`, safe volume `01000000`), the current state
+reads as `snapshot` — the classification and the round trip are correct.
+
+**B. `apply` re-patched the device** (`apply-ok written=8 verified=8` in the
+journal), and a later `apply` correctly reported `wrote 0` because the values were
+already at target. That is not a bug: the journal proves the earlier run wrote.
+
+**C. CORRECTION - more than one privileged step per boot is possible.** Section 10
+and the user documentation claimed the second step would fail. Measured: a second
+`read` immediately after an `apply`, without rebooting, returned `EXIT=0` with the
+usual duplicate note. The cached exemption still starts the payload, so further
+steps run. The cost of chaining is only that the player's apps stay broken until
+the reboot - so "one step per boot, then reboot" is now the *recommended*
+procedure, not a hard limit.
+
+**D. CORRECTION - a restore takes about 40 s.** Eight fields, each with its own
+injection plus the settle window. A 30 s command window kills it mid-restore,
+leaving fields 0..N written and both locks in place. The tool then refuses the next
+run with exit 12 and names the locks:
+
+- host: `$TMPDIR/nvptool.lock.<serial>` - a **directory**, so `rm -rf` it;
+- device: `/data/local/tmp/nvptool.lock`, owner recorded in `owner`.
+
+Recovery is: inspect both, remove them, reboot, re-run. Nothing was corrupted in
+this test, but the state is partial until the restore is completed.
+
+**E. Confirmed unchanged:** duplicates are still accepted only when benign, the
+setting is always cleaned up, and no NVRAM value changed without a command that
+intended it.

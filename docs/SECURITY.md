@@ -92,7 +92,7 @@ No claim is made here about battery life, third-party applications, or any other
 behaviour; nothing of that kind was measured.
 
 
-## Tool boundary in the current 0.2.3 source
+## Tool boundary in the current 0.2.5 source
 
 The host checks the exact supported model/build before privileged work. It
 compares the installed helper APK bytes, pulled from the device, with the
@@ -106,8 +106,10 @@ and retains a protected local record and device lock for inspection; it does
 not blindly retry or delete an unknown pre-existing setting.
 
 These are source-level controls, not an independent test of the Sony device.
-The original manual method reached the vendor HAL on the author's unit; the
-finished 0.2.3 wrappers have not yet been run end-to-end on physical hardware.
+The original manual method reached the vendor HAL on the author's unit. With
+0.2.5 the packaged macOS tool has been run on that unit for `read`, `apply`
+(8/8 written), `restore` and `restore-reference`; the Windows and Linux tools
+have not been run on a Walkman, and nothing here is a second-unit result.
 An eight-field NVRAM operation is not atomic, and the normal restore code
 intentionally rejects certain unexpected current values. No claim is made
 that every damaged state can be recovered by this tool.

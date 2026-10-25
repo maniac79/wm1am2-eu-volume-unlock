@@ -12,7 +12,36 @@ was published or that physical hardware was tested.
 
 ---
 
-## 0.2.4 — current, experimental pre-release
+## 0.2.5 — current, experimental pre-release
+
+Source commit: the `v0.2.5` tag. `versionName=0.2.5`, `versionCode=8`; same
+dedicated signing certificate. No change to the unlock mechanism. This release
+carries the documentation corrections forced by a second hardware pass, and keeps
+exactly one release downloadable (0.2.4 and 0.2.2 binaries are withdrawn, tags
+kept).
+
+- **Corrected: more than one privileged step per boot is possible.** The docs
+  claimed the second step would fail; on hardware a second step returns exit 0.
+  One step per boot, then reboot, stays the *recommended* procedure because the
+  player's apps stay broken until that reboot.
+- **Corrected: `restore` takes about 40 s** (eight fields, each with its own
+  settle window). The docs now say so and explain recovery after an interrupted
+  run: the host lock is a directory (`rm -rf`), the device lock is
+  `/data/local/tmp/nvptool.lock`.
+- **Confirmed on hardware:** `restore` from the device's own `baseline` returns
+  the cap; `apply` re-patches the player (`written=8`); the baseline/snapshot
+  classification is correct.
+- **Documentation:** the shipped `QUICKSTART.txt` no longer names an old version
+  in its title; `docs/ZYGOTE-SINGLE-EXECUTION.md` records this pass (section 11)
+  and no longer describes the removed write hold; `SECURITY.md`,
+  `MANUAL-TEST-PLAN.md` and `FINDINGS.md` are aligned with the current build.
+- **Tooling:** the dead PowerShell `Assert-WriteEnabled` is gone, and the docs
+  check now fails when the shipped QUICKSTART title version differs from the tool
+  version.
+
+---
+
+## 0.2.4 — withdrawn (binaries removed, tag kept)
 
 Hardware verification of this build (one unit, firmware 1.09.00, packaged macOS
 archive): `restore-reference` returned the cap (`safe_volume 01000000` after
@@ -106,7 +135,7 @@ future, separately reviewed device actions, not results of this source change.
 
 ---
 
-## 0.2.2 — older published experimental pre-release with known issues
+## 0.2.2 — withdrawn (binaries removed, tag kept)
 
 Source commit: the `v0.2.2` tag. Functionally identical to 0.2.1 — this release
 exists for **one** reason: the signing key.

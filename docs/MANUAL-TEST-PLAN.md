@@ -1,7 +1,8 @@
-# Manual hardware validation plan for a future 0.2.3 build
+# Manual hardware validation plan (current build: 0.2.5)
 
-**No item in this plan has been run on a physical player for the finished
-0.2.3 macOS, Windows or Linux tool.** The project author reports that the
+**Status: with 0.2.5 the macOS items for `status`, `read`, `apply`,
+`restore-reference` and `restore` have been run on the author's unit; the
+Windows and Linux items and the interruption items have NOT.** The project author reports that the
 original manual method worked on their NW-WM1AM2. Mock tests, CI and ZIP
 integrity checks are different evidence. Record `pass`, `fail` or `not run`
 for each step; do not turn a skipped or simulated step into hardware acceptance.
@@ -91,8 +92,8 @@ Choose **one evidence path** and record what is actually available:
    reference profile. State that the reference-to-unit provenance is not
    established here. Do not label it a factory restore without separate proof.
 
-The owner reports a planned **manual rollback before the first macOS 0.2.3
-package test**. Its exact historical evidence and procedure must be reviewed
+A manual rollback was performed before the first packaged macOS test, and the
+later `restore` run used the device's own `baseline` backup. Its exact historical evidence and procedure must be reviewed
 separately. This checklist neither assumes an original backup is absent nor
 approves `restore-reference` as a substitute. A damaged current NVRAM field
 may be refused by the normal `RestoreField` guard despite a valid backup;

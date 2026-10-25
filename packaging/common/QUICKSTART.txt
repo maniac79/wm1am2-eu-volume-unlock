@@ -1,4 +1,4 @@
-   SONY NW-WM1AM2 - EU VOLUME CAP TOOL 0.2.3
+   SONY NW-WM1AM2 - EU VOLUME CAP TOOL 0.2.5
    ========================================
 
    READ FIRST - EXPERIMENTAL
@@ -14,12 +14,15 @@
      2. Reboot: option 5. (Apply needs the reboot anyway to load the table.)
      3. Use option 1 (status) to confirm; it is free and never privileged.
 
-   Do not chain several privileged steps in one boot - the second one will fail.
-   The tool prints this reminder after every privileged step.
+   Further privileged steps DO still work in the same boot (measured), but they
+   keep the player's apps broken, so reboot as soon as you are done. Restoring
+   eight fields takes about 40 seconds; if a run is interrupted, remove the
+   leftover lock the tool names and start again. The tool prints the reboot
+   reminder after every privileged step.
    Details: docs/ZYGOTE-SINGLE-EXECUTION.md in the repository.
 
    The project author reports a successful ORIGINAL MANUAL change on one
-   NW-WM1AM2. The finished 0.2.4 macOS tool WAS exercised on that unit: a
+   NW-WM1AM2. The finished macOS tool WAS exercised on that unit: a
    privileged read, a real reference-profile write (cap returned after reboot)
    and a real apply (8/8 fields written, cap off after reboot). The Windows and
    Linux tools have NOT been run on a Walkman, and restore-from-backup has not

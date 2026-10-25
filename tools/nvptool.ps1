@@ -16,7 +16,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------- constants
-$ToolVersion = '0.2.4'
+$ToolVersion = '0.2.5'
 $Schema      = '1'
 $Pkg         = 'org.maniac79.nvptool'
 $Hal         = '/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk'
@@ -645,24 +645,6 @@ function Get-LatestBaseline {
          Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($f) { return $f.FullName }
     return $null
-}
-
-function Assert-WriteEnabled {
-    # One privileged request can execute more than once on device (see
-    # docs/ZYGOTE-SINGLE-EXECUTION.md). For a read that is waste; for a write it
-    # is an unbounded number of NVRAM operations. Writes stay closed until the
-    # single-shot design is validated on hardware.
-    if ($env:NVPTOOL_ALLOW_UNVALIDATED_WRITE -eq '1') { return }
-    [Console]::Error.WriteLine(
-        "nvptool: NVRAM writes are disabled in this build.`n`n" +
-        "Reason: one privileged request can run more than once on the device `n" +
-        "(duplicate execution through the Zygote exemption), which is not safe `n" +
-        "for writes. Reads - 'status' and 'read' - remain available.`n`n" +
-        "This is a deliberate safety hold. Lifting it requires the design in `n" +
-        "docs/ZYGOTE-SINGLE-EXECUTION.md to be validated on an Android 11 `n" +
-        "NW-WM1AM2. Deliberate bypass, at your own risk:`n" +
-        "  NVPTOOL_ALLOW_UNVALIDATED_WRITE=1")
-    exit 13
 }
 
 function Assert-Cleanup([string]$Op) {

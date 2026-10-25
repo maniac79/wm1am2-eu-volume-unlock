@@ -118,6 +118,13 @@ else
     bad "README neither links v$V_PROFILE nor labels it unpublished"
 fi
 
+echo "== the shipped QUICKSTART title carries the current version =="
+if grep -qF "EU VOLUME CAP TOOL $V_PROFILE" "$QS"; then
+    ok
+else
+    bad "QUICKSTART title does not name $V_PROFILE"
+fi
+
 echo "== archive names carry the current version =="
 for os in macos windows linux; do
     name="wm1am2-nvptool-$os-$V_PROFILE.zip"

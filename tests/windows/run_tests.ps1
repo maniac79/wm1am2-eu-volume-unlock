@@ -400,6 +400,13 @@ Check 'apply with aborting duplicate rc 0' ($r.Rc -eq 0)
 Check 'apply still reports verified' ($r.Out -match 'apply OK')
 Check 'apply states the reboot step' ($r.Out -match 'REBOOT REQUIRED')
 
+Write-Host '== a duplicated restore-reference is accepted when benign =='
+[void](New-Env); $env:FAKE_DUP_ABORT = '1'
+$r = Run-Nv @('restore-reference')
+Check 'restore-reference with duplicate rc 0' ($r.Rc -eq 0)
+Check 'restore-reference still reports verified' ($r.Out -match 'reference profile restored')
+Check 'restore-reference states the reboot step' ($r.Out -match 'REBOOT REQUIRED')
+
 Write-Host ''
 Write-Host "PASS=$($script:Pass) FAIL=$($script:Fail)"
 Remove-Item -LiteralPath $FixtureRoot -Recurse -Force -ErrorAction SilentlyContinue

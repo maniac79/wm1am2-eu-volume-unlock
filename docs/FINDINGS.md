@@ -198,8 +198,9 @@ The target field values can be written again when the current state satisfies
 the payload guards. Do not use a repeat `Apply` as a harmless confirmation:
 `Apply` attempts persistent NVRAM writes and cleanup of a temporary global
 setting. Use `status` for a property-only check and a separately assessed
-privileged `read` for all eight values. The packaged 0.2.3 implementation
-remains untested on physical hardware.
+privileged `read` for all eight values. The packaged macOS implementation was run on the author's unit in the 0.2.4
+and 0.2.5 passes (`read`, `apply`, `restore`, `restore-reference`); Windows and
+Linux remain untested on hardware.
 
 **Magnitude: not established.** The two shipped output tables differ in 3202 of
 15738 bytes. That is a byte-diff, not an attenuation measurement: converting it
@@ -211,7 +212,8 @@ that figure was an unsupported inference and has been removed.
 
 **What is observed vs. what is interpreted.** For the original manual run,
 the author reports that eight field values were written and read back equal
-on the tested unit. This is not a hardware result for the packaged 0.2.3 tool. Interpreted: that the
+on the tested unit. This was a manual result; the packaged tool has since reproduced it on the
+same unit (`apply-ok written=8 verified=8`). Interpreted: that the
 boot script then loads the non-CEU table, because `vendor.safe_volume.enabled`
 reads `00000000`. Not established: the minimum field set required, whether the
 High Gain switch becomes audible, and the size of any loudness change.
