@@ -133,6 +133,7 @@ if ($sub -eq '-s') {
             $late = ($env:FAKE_DUP_LATE -eq '1') -or (($env:FAKE_DUP_ABORT -eq '1') -and $pushIsApply)
             if ($late) {
                 $savedResp = $env:FAKE_RESPONSE_WRITE
+                if ($env:FAKE_LATE_RESPONSE) { $env:FAKE_RESPONSE_WRITE = $env:FAKE_LATE_RESPONSE }
                 if (($env:FAKE_DUP_ABORT -eq '1') -and $pushIsApply) { $env:FAKE_RESPONSE_WRITE = 'abort' }
                 $script:FakePid = if ($env:FAKE_PID2) { [int]$env:FAKE_PID2 } else { 4202 }
                 Set-Content -LiteralPath (Join-Path $S 'pending_late') -Value (New-ResultLines $rest[1])

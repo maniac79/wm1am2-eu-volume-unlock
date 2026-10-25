@@ -87,7 +87,7 @@ function New-Env {
                      'FAKE_SETTINGS_LIST_FAIL', 'FAKE_START_FAIL', 'FAKE_APP_MISSING',
                      'FAKE_INSTALLED_APK', 'FAKE_PULL_FAIL', 'FAKE_INSTALL_FAIL',
                      'NVPTOOL_SERIAL', 'FAKE_DUP_LATE', 'FAKE_PID', 'FAKE_PID2', 'FAKE_NO_CLAIM', 'FAKE_DUP_SKIPPED', 'FAKE_DUP_ABORT',
-                     'FAKE_APPLY_NOOP', 'FAKE_RESTORE_NOOP', 'FAKE_BEGIN_ONLY', 'FAKE_APPLY_WRITTEN', 'FAKE_DUP_BEGIN_ONLY', 'FAKE_OP_LIE',
+                     'FAKE_APPLY_NOOP', 'FAKE_RESTORE_NOOP', 'FAKE_BEGIN_ONLY', 'FAKE_APPLY_WRITTEN', 'FAKE_DUP_BEGIN_ONLY', 'FAKE_OP_LIE', 'FAKE_LATE_RESPONSE',
                      'NVPTOOL_ALLOW_UNVALIDATED_WRITE',
                      'NVPTOOL_ALLOW_NON_BASELINE_RESTORE')) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
@@ -413,6 +413,13 @@ Write-Host '== reconciliation: a record for another operation is rejected =='
 $r = Run-Nv @('read')
 Check 'operation mismatch rejected' ($r.Rc -ne 0)
 Check 'operation mismatch named' ($r.Out -match 'operation mismatch')
+
+Write-Host '== reconciliation: a success beside a failure is rejected =='
+[void](New-Env); $env:FAKE_DUP_LATE = '1'; $env:FAKE_LATE_RESPONSE = 'fatal'
+$r = Run-Nv @('apply')
+Check 'success beside failure rejected' ($r.Rc -ne 0)
+Check 'contradiction named' ($r.Out -match 'failed execution accompanied a success')
+Check 'no success claim beside a failure' (-not ($r.Out -match 'apply OK'))
 
 Write-Host '== reconciliation: impossible counters are rejected =='
 [void](New-Env); $env:FAKE_APPLY_WRITTEN = '9'

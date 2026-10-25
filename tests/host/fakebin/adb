@@ -276,7 +276,7 @@ if [ "$sub" = "-s" ]; then
             dup_late=1
         fi
         if [ "$dup_late" = "1" ]; then
-            late_resp="${FAKE_RESPONSE_WRITE:-ok}"
+            late_resp="${FAKE_LATE_RESPONSE:-${FAKE_RESPONSE_WRITE:-ok}}"
             if [ "${FAKE_DUP_ABORT:-0}" = "1" ] && grep -qE 'nvptool\.(Apply|RestoreReference)' "$S/payload.txt" 2>/dev/null; then
                 late_resp=abort
             fi

@@ -35,7 +35,7 @@ newenv() {
     # Bind the mock explicitly: the tool refuses a relative path, so it can never
     # silently fall back to a real adb found on PATH.
     export NVPTOOL_ADB="$FAKEBIN/adb"
-    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK FAKE_DUP_LATE FAKE_PID FAKE_PID2 FAKE_NO_CLAIM FAKE_DUP_SKIPPED FAKE_DUP_ABORT FAKE_APPLY_NOOP FAKE_RESTORE_NOOP FAKE_BEGIN_ONLY FAKE_APPLY_WRITTEN FAKE_DUP_BEGIN_ONLY FAKE_OP_LIE 2>/dev/null || true
+    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK FAKE_DUP_LATE FAKE_PID FAKE_PID2 FAKE_NO_CLAIM FAKE_DUP_SKIPPED FAKE_DUP_ABORT FAKE_APPLY_NOOP FAKE_RESTORE_NOOP FAKE_BEGIN_ONLY FAKE_APPLY_WRITTEN FAKE_DUP_BEGIN_ONLY FAKE_OP_LIE FAKE_LATE_RESPONSE 2>/dev/null || true
     # The write paths are on a safety hold, so the suites exercise their logic
     # behind the documented bypass. The hold itself is tested on its own.
     export NVPTOOL_ALLOW_UNVALIDATED_WRITE=1
@@ -384,6 +384,12 @@ echo "== reconciliation: a record for another operation is rejected =="
 newenv; export FAKE_OP_LIE=1; nv read
 expect_rcnz "operation mismatch rejected" "$RC"
 expect_has "operation mismatch named" "op_mismatch" "$OUT"
+
+echo "== reconciliation: a success beside a failure is rejected =="
+newenv; export FAKE_DUP_LATE=1 FAKE_LATE_RESPONSE=fatal; nv apply
+expect_rcnz "success beside failure rejected" "$RC"
+expect_has "contradiction named" "contradictory_status" "$OUT"
+expect_hasnt "no success claim beside a failure" "apply OK" "$OUT"
 
 echo "== reconciliation: impossible counters are rejected =="
 newenv; export FAKE_APPLY_WRITTEN=9; nv apply
