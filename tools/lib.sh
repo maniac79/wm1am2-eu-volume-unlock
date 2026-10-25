@@ -4,7 +4,7 @@
 #
 # Source this file; do not execute it.
 
-NL_TOOL_VERSION="0.2.6"
+NL_TOOL_VERSION="0.2.7"
 NL_TAG="NVPTOOL"
 NL_PKG="org.maniac79.nvptool"
 NL_HAL="/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk"

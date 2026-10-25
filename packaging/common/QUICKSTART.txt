@@ -1,4 +1,4 @@
-   SONY NW-WM1AM2 - EU VOLUME CAP TOOL 0.2.6
+   SONY NW-WM1AM2 - EU VOLUME CAP TOOL 0.2.7
    ========================================
 
    READ FIRST - EXPERIMENTAL
@@ -62,7 +62,7 @@
    to the value printed OUTSIDE the ZIP in that release's notes. The internal
    SHA256SUMS.txt checks package contents but cannot establish publisher origin
    by itself. Check SOURCE-COMMIT.txt and the APK signer described in the
-   repository's docs/SIGNING.md. If the 0.2.6 Assets are not shown on the
+   repository's docs/SIGNING.md. If the 0.2.7 Assets are not shown on the
    release page, wait for a package; do not substitute a source archive. Older
    releases, including v0.2.2, have had their binaries withdrawn - only the
    current release is downloadable.

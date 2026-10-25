@@ -23,6 +23,7 @@ and provenance too.
 | 0.2.4 | `versionCode=7`, **same** dedicated release certificate; writes enabled again |
 | 0.2.5 | `versionCode=8`, same certificate; documentation and tooling release |
 | 0.2.6 | `versionCode=9`, same certificate; reboot made part of the process |
+| 0.2.7 | `versionCode=10`, same certificate; host validation only (logcat format, claim-skip records, recovery docs) |
 
 `tools/build.sh` defaults to `NVPTOOL_SIGNING_MODE=release`. It requires the
 maintainer's existing keystore (normally `~/.nvptool/nvptool-release.jks`) and
@@ -36,7 +37,7 @@ refuses to overwrite an existing key/password file and does not display the
 password. Keep both files private and backed up outside the repository.
 
 The 0.1.0–0.2.1 helper used an earlier shared debug certificate and cannot be
-upgraded in place to any 0.2.2-or-later build, including the current 0.2.6. On an installation signed with that older
+upgraded in place to any 0.2.2-or-later build, including the current 0.2.7. On an installation signed with that older
 key, `install` returns Android's signing mismatch and **does not automatically
 uninstall** it. If the user has identified that old helper and chooses to
 remove it, the explicit command is:
@@ -47,8 +48,8 @@ adb uninstall org.maniac79.nvptool
 
 Uninstall removes the app, **not** the eight persistent NVRAM values or backup
 files on the host. It is not a rollback. An existing correctly signed 0.2.2
-helper can be upgraded in place to the current 0.2.6 release build by explicit menu
-option 7 or CLI `install`, provided a verified 0.2.6 package is available. Check
+helper can be upgraded in place to the current 0.2.7 release build by explicit menu
+option 7 or CLI `install`, provided a verified 0.2.7 package is available. Check
 the current GitHub Assets; a source checkout is not proof of publication.
 
 ## Independent and CI builds
@@ -85,7 +86,7 @@ a maintainer release. A receipt and checksum detect input drift but do not by
 themselves prove bit-for-bit reproducibility from public source.
 
 Only a clean, eligible release build uses the unsuffixed official name
-`wm1am2-nvptool-OS-0.2.6.zip`. Nonrelease archives carry a visible suffix such
+`wm1am2-nvptool-OS-0.2.7.zip`. Nonrelease archives carry a visible suffix such
 as `-ci`, `-local`, `-dirty` or `-ci-dirty` before `.zip`; they must not be
 published as official release assets. Inspect the archive's `SOURCE-COMMIT.txt`:
 an official package records `signing_mode=release`, the pinned

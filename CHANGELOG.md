@@ -12,7 +12,38 @@ was published or that physical hardware was tested.
 
 ---
 
-## 0.2.6 — current, experimental pre-release
+## 0.2.7 — source-ready, not yet published
+
+Source: this branch tip, on top of `v0.2.6` (`a8be4de`). `versionName=0.2.7`,
+`versionCode=10`; same dedicated signing certificate. Host validation only: no
+change to the unlock mechanism, claim mechanism, gain profiles, signing
+certificate or backup schema, and no claim to fix the underlying
+Zygote/Settings problem.
+
+- **One logcat format contract.** Both collectors request `-v raw` for every
+  polling and final read, and both parsers require records at column 0. A
+  collector that forgets the flag fails closed (outcome unknown) rather than
+  half-accepting a prefixed line, and the fixtures now emit whatever format was
+  requested instead of always returning bare records.
+- **A claim-losing process is a workless skip, not an execution.** `Read` emits
+  only `duplicate_skipped` from the process that lost the claim. That PID is no
+  longer rejected for a missing begin/summary, but it must carry nothing else,
+  the run must have a complete validated winner, and only `read` may skip. A
+  skip note on a process that also did work is rejected, and the number of
+  skipped processes is reported separately in both hosts.
+- **Recovery order corrected.** QUICKSTART and README now preserve the lock,
+  recovery record and backup, inspect them without privileged operations,
+  establish the outcome, decide deliberately about the lock, and only then read.
+  The previous text prescribed a read that the surviving lock refuses.
+- **Historical evidence labelled as historical.** `docs/MANUAL-TEST-PLAN.md` and
+  `docs/SECURITY.md` no longer describe 0.2.5 as current, and distinguish the
+  released v0.2.6 from this unreleased work.
+
+**Hardware status:** no hardware run was performed for 0.2.7. The hardware
+results cited elsewhere come from the 0.2.4-0.2.6 macOS passes on one unit; none
+of them exercised this validation code.
+
+## 0.2.6 — previous release (tag kept; assets retired when 0.2.7 is published)
 
 Source commit: the `v0.2.6` tag. `versionName=0.2.6`, `versionCode=9`; same
 dedicated signing certificate. No change to the unlock mechanism: this release

@@ -444,7 +444,7 @@ echo "== the parser itself refuses a snapshot holding only a skip record =="
 newenv
 RUNDIR="$T/rundir"; mkdir -p "$RUNDIR"
 printf '%s\n' \
-    "NVPTOOL_RESULT v=1 schema=1 tool=0.2.6 run=R1 op=read pid=4202 ev=note msg=duplicate_skipped" \
+    "NVPTOOL_RESULT v=1 schema=1 tool=0.2.7 run=R1 op=read pid=4202 ev=note msg=duplicate_skipped" \
     > "$RUNDIR/result.txt"
 POUT=$(NL_RUN_DIR="$RUNDIR" bash -c \
     '. ./tools/lib.sh; nl_parse read R1; printf " rc=%s err=%s" "$?" "$NL_PARSE_ERR"' 2>&1)

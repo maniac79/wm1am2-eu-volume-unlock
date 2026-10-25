@@ -54,6 +54,10 @@ What was actually run, and where:
 | Windows tool | **not tested on hardware** — simulated adb only, under PowerShell 5.1 and 7 in CI |
 | Interruption handling | mock-tested only — do not unplug USB mid-write |
 
+**0.2.7 is a host-validation release: no hardware run was performed for it.**
+The rows above describe the 0.2.4-0.2.6 passes; none of them exercised the
+0.2.7 validation code.
+
 **What "tested" means here:** one physical unit, the author's, firmware `1.09.00`.
 A single unit is not a compatibility statement.
 
@@ -258,10 +262,11 @@ one property or from a reset alone.
 
 ### Download and inspect the package
 
-For version 0.2.6, use the named **Assets** on the
-[v0.2.6 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.6):
-`wm1am2-nvptool-macos-0.2.6.zip`, `wm1am2-nvptool-windows-0.2.6.zip` or
-`wm1am2-nvptool-linux-0.2.6.zip`. GitHub's automatically generated “Source
+This 0.2.7 source is not a published release yet. When it is published, use
+the named **Assets** on the
+[v0.2.7 release page](https://github.com/maniac79/wm1am2-eu-volume-unlock/releases/tag/v0.2.7):
+`wm1am2-nvptool-macos-0.2.7.zip`, `wm1am2-nvptool-windows-0.2.7.zip` or
+`wm1am2-nvptool-linux-0.2.7.zip`. GitHub's automatically generated “Source
 code” archives are not ready-to-run packages and contain no built helper APK.
 
 Exactly one release is downloadable at a time. The 0.2.5 and earlier binaries -
