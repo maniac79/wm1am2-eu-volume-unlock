@@ -363,16 +363,14 @@ if ($isWindowsOs) {
 }
 Remove-Item -LiteralPath $pkg -Recurse -Force -ErrorAction SilentlyContinue
 
-Write-Host '== write hold: NVRAM writes are refused unless deliberately bypassed =='
-[void](New-Env); Remove-Item Env:NVPTOOL_ALLOW_UNVALIDATED_WRITE -ErrorAction SilentlyContinue
+Write-Host '== writes are enabled and the reboot step is stated =='
+[void](New-Env)
 $r = Run-Nv @('apply')
-Check 'apply is held' ($r.Rc -eq 13)
-Check 'hold explains the duplicate-execution reason' ($r.Out -match 'run more than once')
-Check 'hold makes no success claim' (-not ($r.Out -match 'apply OK'))
-Check 'restore is held' ((Run-Nv @('restore')).Rc -eq 13)
-Check 'restore-reference is held' ((Run-Nv @('restore-reference')).Rc -eq 13)
+Check 'apply rc 0' ($r.Rc -eq 0)
+Check 'apply reports verified fields' ($r.Out -match 'apply OK')
+Check 'apply states the reboot step' ($r.Out -match 'REBOOT REQUIRED')
 $r = Run-Nv @('read')
-Check 'read is not held' (-not ($r.Out -match 'writes are disabled'))
+Check 'read states the reboot step' ($r.Out -match 'REBOOT REQUIRED')
 
 Write-Host '== identical read-only duplicates are accepted and flagged =='
 [void](New-Env); $env:FAKE_DUP_LATE = '1'

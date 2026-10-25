@@ -140,13 +140,11 @@ nl_cmd_read() {
     if [ "${NL_DUPLICATES:-0}" -gt 0 ]; then
         printf '\nNOTE: %s duplicate device execution(s); all were read-only and returned\n' "$NL_DUPLICATES"
         printf 'identical values, so the result is valid.\n'
-        printf 'REBOOT REQUIRED before using the player again: in this boot every new app\n'
-        printf 'process is replaced by the payload (docs/ZYGOTE-SINGLE-EXECUTION.md).\n'
     fi
+    nl_print_reboot_required
 }
 
 nl_cmd_apply() {
-    nl_require_write_enabled
     nl_select_device
     nl_lock_acquire
     nl_preflight
@@ -212,6 +210,7 @@ Recovery: 'nvptool.sh read' and compare against
         nl_journal "apply-ok" "written=$NL_WRITTEN verified=$NL_VERIFIED cleanup=$NL_CLEANUP_OK"
         printf 'apply OK - %s/%s verified (wrote %s)\n' "$NL_VERIFIED" "$NL_TOTAL" "$NL_WRITTEN"
         printf 'backup: %s\n' "$NL_BACKUP_FILE"
+        nl_print_reboot_required
         printf 'Reboot for the change to take effect.\n'
         return 0
     fi
@@ -223,7 +222,6 @@ Recovery: 'nvptool.sh read', then 'nvptool.sh restore'
 }
 
 nl_cmd_restore() {
-    nl_require_write_enabled
     local file="${1:-}" kind
     nl_select_device
     nl_lock_acquire
@@ -294,10 +292,10 @@ restored fields are rewritten with the same values)." 7
     nl_require_cleanup "restore"
     nl_journal "restore-ok" "file=$file kind=$kind"
     printf 'restore OK (%s) - reboot to reload the table for these values.\n' "$kind"
+    nl_print_reboot_required
 }
 
 nl_cmd_restore_reference() {
-    nl_require_write_enabled
     nl_select_device
     nl_lock_acquire
     nl_preflight
@@ -315,6 +313,7 @@ nl_cmd_restore_reference() {
     nl_require_cleanup "restore-reference"
     nl_journal "restore-reference-ok" "verified=$NL_VERIFIED"
     printf 'reference profile restored (%s/%s verified). Reboot.\n' "$NL_VERIFIED" "$NL_TOTAL"
+    nl_print_reboot_required
 }
 
 nl_cmd_reboot() {

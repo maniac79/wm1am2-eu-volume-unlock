@@ -334,22 +334,33 @@ already written earlier fields. The tool reports that boundary; a subsequent
 write needs an assessed current state and recovery plan. Preserve the
 package's APK for future use, as well as your backups.
 
-### Current limitation: one privileged read per boot
+### The procedure: one privileged operation per boot, then reboot
 
 On this firmware a single privileged request executes more than once on the
-device, and that cannot be prevented by the tool (measurements in
-[docs/ZYGOTE-SINGLE-EXECUTION.md](docs/ZYGOTE-SINGLE-EXECUTION.md)). After any
-privileged operation, Android replaces every new app process with the tool's
-payload for the rest of that boot, so apps - Settings included - will not open
-until the player is restarted.
+device and that cannot be prevented by the tool (measurements in
+[docs/ZYGOTE-SINGLE-EXECUTION.md](docs/ZYGOTE-SINGLE-EXECUTION.md)). In addition,
+after any privileged operation Android replaces every new app process with the
+tool's payload for the rest of that boot, so apps - Settings included - will not
+open until the player is restarted.
 
-The tool therefore works like this:
+That cost is part of the procedure, not a defect to work around:
+
+1. Run **one** privileged operation: `read`, **or** `apply`, **or** `restore`,
+   **or** `restore-reference`.
+2. **Reboot the player** (`nvptool.sh reboot`, or menu option 5). The volume table
+   is loaded at boot anyway, so `apply` needs the reboot regardless.
+3. Continue with `status` (free, never privileged) to confirm the result.
 
 | Action | Per boot | Cost |
 |---|---|---|
 | `status` | unlimited | none |
-| `read` | one | reboot afterwards; duplicate executions are accepted only when all agree and none wrote |
-| `apply`, `restore`, `restore-reference` | none | disabled (exit 13) until a write can be verified |
+| `read` | one | reboot afterwards |
+| `apply`, `restore`, `restore-reference` | one in total, not one each | reboot afterwards |
+
+Duplicate executions are accepted **only** when every execution succeeded: a read
+additionally must have written nothing and returned byte-identical values, and a
+write path must have every execution report `status=OK` (each one verifies its
+own read-back). Anything else is refused.
 
 ### From source
 

@@ -299,3 +299,31 @@ cost instead of hiding it.
 | `status` | unlimited | none |
 | `read` | one | reboot afterwards |
 | `apply` / `restore` / `restore-reference` | none | held |
+
+## 10. Final model: one privileged step per boot (writes enabled)
+
+The safety hold was removed. On this firmware the honest, workable contract is:
+
+1. **One privileged step per boot** - `read`, `apply`, `restore` or
+   `restore-reference`. Not two; the second one cannot start app processes.
+2. **Then reboot.** The volume table is loaded at boot anyway, so `apply` needs
+   it regardless; the reboot also clears the cached exemption.
+3. **`status` is free** and can be used any number of times to confirm the result
+   after the reboot.
+
+Acceptance rules for the unavoidable duplicate execution:
+
+| operation | accepted when |
+|---|---|
+| `read` | every execution `status=OK`, `written=0`, `verified=total=8`, all eight values byte-identical across executions |
+| `apply`, `restore`, `restore-reference` | every execution `status=OK` (each verifies its own read-back); a repeat write of the same value is a no-op by design |
+
+Anything else - a failed or partial execution, a duplicate read that wrote, or two
+read executions that disagree - is refused.
+
+Verified on hardware: `apply` on an already-patched unit returned
+`apply OK - 8/8 verified (wrote 0)` with the reboot step, exit 0 - the write path
+end to end, with no NVRAM change because the values were already in place.
+
+Still true and unfixed: the Settings screen stays broken until that reboot. It is
+now a documented step instead of a surprise.

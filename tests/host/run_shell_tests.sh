@@ -320,18 +320,13 @@ expect_has "menu.sh shows the status output" "device      :" "$OUT"
 expect_has "menu.sh lists the backup restore option" "4) Restore from backup" "$OUT"
 expect_hasnt "menu.sh does not claim Windows is read-only" "READ-ONLY for now" "$OUT"
 
-echo "== write hold: NVRAM writes are refused unless deliberately bypassed =="
-newenv; unset NVPTOOL_ALLOW_UNVALIDATED_WRITE
-nv apply
-expect_rc "apply is held" 13 "$RC"
-expect_has "hold explains the duplicate-execution reason" "run more than once" "$OUT"
-expect_hasnt "hold makes no success claim" "apply OK" "$OUT"
-nv restore
-expect_rc "restore is held" 13 "$RC"
-nv restore-reference
-expect_rc "restore-reference is held" 13 "$RC"
+echo "== writes are enabled and the reboot step is stated =="
+newenv; nv apply
+expect_rc "apply rc" 0 "$RC"
+expect_has "apply reports verified fields" "apply OK" "$OUT"
+expect_has "apply states the reboot step" "REBOOT REQUIRED" "$OUT"
 nv read
-expect_hasnt "read is not held" "writes are disabled" "$OUT"
+expect_has "read states the reboot step" "REBOOT REQUIRED" "$OUT"
 
 echo "== identical read-only duplicates are accepted and flagged =="
 newenv; export FAKE_DUP_LATE=1; nv read

@@ -392,7 +392,7 @@ function Assert-Result {
     # cannot be prevented (docs/ZYGOTE-SINGLE-EXECUTION.md). For a READ it is
     # acceptable only when every execution was read-only and all executions
     # returned byte-identical values. Writes never take this path.
-    if ($Op -eq 'read' -and $begins.Count -gt 1) {
+    if ($begins.Count -gt 1) {
         $byPid = @{}
         foreach ($l in $lines) {
             $p = Get-Token $l 'pid'
@@ -404,7 +404,9 @@ function Assert-Result {
             elseif ($l -match 'ev=summary') {
                 $byPid[$p].Sum++
                 if ((Get-Token $l 'status') -ne 'OK') { Fail 'duplicate execution was not OK: outcome UNKNOWN' 4 }
-                if ((Get-Token $l 'written') -ne '0') { Fail 'duplicate execution wrote: refusing' 4 }
+                if ($Op -eq 'read' -and (Get-Token $l 'written') -ne '0') {
+                    Fail 'duplicate read wrote: refusing' 4
+                }
             } elseif ($l -match 'ev=field') {
                 $byPid[$p].Fields[(Get-Token $l 'idx')] = (Get-Token $l 'val')
             }
@@ -414,10 +416,10 @@ function Assert-Result {
                 Fail 'malformed duplicate execution records' 4
             }
         }
-        for ($i = 0; $i -lt 8; $i++) {
+        if ($Op -eq 'read') { for ($i = 0; $i -lt 8; $i++) {
             $vals = @($byPid.Keys | ForEach-Object { $byPid[$_].Fields["$i"] } | Sort-Object -Unique)
             if ($vals.Count -ne 1) { Fail "duplicate executions disagree on field $i" 4 }
-        }
+        } }
         $dup = $byPid.Count - 1
         # Values are proven identical, so any execution's field records describe
         # the same state; return exactly one set so the backup is built once.
@@ -764,12 +766,12 @@ function Invoke-ReadCmd {
     if ($res.Duplicates -gt 0) {
         Write-Output ''
         Write-Output "NOTE: $($res.Duplicates) duplicate device execution(s); all were read-only and returned identical values, so the result is valid."
-        Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload (docs/ZYGOTE-SINGLE-EXECUTION.md).'
     }
+    Write-Output ''
+    Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload, so apps (including Settings) will not open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.'
 }
 
 function Invoke-ApplyCmd {
-    Assert-WriteEnabled
     Initialize-Operation
 
     # 1. back up first; nothing is written until a verified backup exists
@@ -816,13 +818,14 @@ function Invoke-ApplyCmd {
 
     Assert-Cleanup 'apply'
     Write-Output "apply OK - $($res2.Verified)/$($res2.Total) verified (wrote $($res2.Written))"
+    Write-Output ''
+    Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload, so apps (including Settings) will not open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.'
     Write-Output "backup: $path"
     Write-Output 'Reboot for the change to take effect.'
 }
 
 
 function Invoke-RestoreCmd {
-    Assert-WriteEnabled
     $file = ''
     if ($Rest -and $Rest.Count -gt 0) { $file = $Rest[0] }
     Initialize-Operation
@@ -876,10 +879,11 @@ function Invoke-RestoreCmd {
 
     Assert-Cleanup 'restore'
     Write-Output "restore OK ($($bk.Kind)) - reboot to reload the table for these values."
+    Write-Output ''
+    Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload, so apps (including Settings) will not open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.'
 }
 
 function Invoke-RestoreReferenceCmd {
-    Assert-WriteEnabled
     Initialize-Operation
     $script:RunId = New-RunId
     $r = Invoke-NvpClass 'org.maniac79.nvptool.RestoreReference' 'restore_reference' `
@@ -889,6 +893,8 @@ function Invoke-RestoreReferenceCmd {
     if ($res.Status -ne 'OK') { Fail "reference restore $($res.Status) ($($res.Reason))" 5 }
     Assert-Cleanup 'restore_reference'
     Write-Output "reference profile restored ($($res.Verified)/$($res.Total) verified). Reboot."
+    Write-Output ''
+    Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload, so apps (including Settings) will not open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.'
 }
 
 function Invoke-RebootCmd {

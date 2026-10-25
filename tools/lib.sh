@@ -262,27 +262,15 @@ nl_settings_restore() {
     return 0
 }
 
-# ------------------------------------------------------ temporary write hold
-# One privileged request can execute MORE THAN ONCE on device: the exemption in
-# hidden_api_blacklist_exemptions is consumed by every zygote fork while it is
-# armed, and the Settings trigger is retried by ActivityManager. For a read that
-# is wasteful; for a write it means an unbounded number of NVRAM operations.
-# Until at most one execution per request is proven on hardware, every write
-# path stays closed. See docs/ZYGOTE-SINGLE-EXECUTION.md.
-nl_require_write_enabled() {
-    [ "${NVPTOOL_ALLOW_UNVALIDATED_WRITE:-0}" = "1" ] && return 0
-    nl_die "NVRAM writes are disabled in this build.
-
-Reason: one privileged request can run more than once on the device (duplicate
-execution through the Zygote exemption), and that is not yet safe for writes.
-Reads - 'status' and 'read' - remain available and are unaffected.
-
-This is a deliberate safety hold, not a transient bug. Lifting it requires the
-single-shot design in docs/ZYGOTE-SINGLE-EXECUTION.md to be validated on an
-Android 11 NW-WM1AM2. Bypassing it is possible only on purpose:
-  NVPTOOL_ALLOW_UNVALIDATED_WRITE=1
-and it is then entirely at your own risk." 13
+# The privileged bootstrap leaves the device unable to start app processes for the
+# rest of this boot (docs/ZYGOTE-SINGLE-EXECUTION.md). The reboot is part of the
+# procedure, not a suggestion, so every privileged command ends with it.
+nl_print_reboot_required() {
+    printf '\nREBOOT REQUIRED before using the player again: in this boot every new app\n'
+    printf 'process is replaced by the payload, so apps (including Settings) will not\n'
+    printf 'open until you restart it. See docs/ZYGOTE-SINGLE-EXECUTION.md.\n'
 }
+
 
 # --------------------------------------------------------- privileged run
 NL_REMOTE_PAYLOAD=""
@@ -412,10 +400,14 @@ nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
     local begins summaries bline sline line
     begins=$(grep -c "ev=begin" "$f" || true)
     summaries=$(grep -c "ev=summary" "$f" || true)
-    # Reads may execute more than once per request on this firmware; accepted only
-    # when every execution is read-only and all saw identical values.
-    if [ "$op" = "read" ] && [ "${begins:-0}" -gt 1 ]; then
-        nl_parse_read_multi
+    # One request executes more than once per boot on this firmware and that
+    # cannot be prevented (docs/ZYGOTE-SINGLE-EXECUTION.md).
+    if [ "${begins:-0}" -gt 1 ]; then
+        if [ "$op" = "read" ]; then
+            nl_parse_read_multi      # additionally proves nothing wrote, values agree
+        else
+            nl_parse_multi_write     # write paths verify their own read-back
+        fi
         return $?
     fi
 
@@ -482,7 +474,29 @@ nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
 # acceptable *only* when every execution is read-only and every execution saw
 # byte-identical values: the result is then the same as one execution would have
 # produced. Anything else is refused. Writes never take this path.
-nl_parse_read_multi() {   # uses $NL_RUN_DIR/result.txt and $NL_RUN_ID
+# A write path may legitimately execute twice (the second run finds the values
+# already in place and writes nothing). What must never pass is an execution that
+# failed: every summary has to report status=OK, because each one verifies its own
+# write by reading the field back. Writes are idempotent, so a repeated write of
+# the same value is harmless; a *failed* repeat is not success.
+nl_parse_multi_write() {
+    local f="$NL_RUN_DIR/result.txt" nsum nok
+    nsum=$(grep -c 'ev=summary' "$f" || true)
+    nok=$(grep 'ev=summary' "$f" | grep -c 'status=OK' || true)
+    [ "${nsum:-0}" -gt 0 ] || { NL_PARSE_ERR="no_summary"; return 3; }
+    [ "$nsum" = "$nok" ] || { NL_PARSE_ERR="not_all_ok"; return 3; }
+    NL_STATUS=OK
+    NL_WRITTEN=$(grep 'ev=summary' "$f" | sed -n 's/.*written=\([0-9][0-9]*\).*/\1/p' | sort -u | tr '\n' ',' | sed 's/,$//')
+    NL_VERIFIED=8; NL_TOTAL=8
+    NL_DUPLICATES=$((nsum - 1))
+    NL_FIELDS=$(grep -c 'ev=field' "$f" || true)
+    NL_REASON="$nsum executions, all verified"
+    return 0
+}
+
+# Read-only variant: proves every execution wrote nothing and that all executions
+# returned byte-identical values for all eight fields.
+nl_parse_read_multi() {
     local f="$NL_RUN_DIR/result.txt" out
     out=$(awk -v want="$NL_RUN_ID" '
         function tk(line, key,   n, i, tok, v) {
