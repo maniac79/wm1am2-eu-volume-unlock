@@ -419,9 +419,15 @@ function Assert-Result {
             if ($vals.Count -ne 1) { Fail "duplicate executions disagree on field $i" 4 }
         }
         $dup = $byPid.Count - 1
+        # Values are proven identical, so any execution's field records describe
+        # the same state; return exactly one set so the backup is built once.
+        $keepPid = @($byPid.Keys | Select-Object -First 1)
+        $keepFields = @($lines | Where-Object {
+            $_ -match 'ev=field' -and (Get-Token $_ 'pid') -eq $keepPid
+        })
         return [pscustomobject]@{
             Status = 'OK'; Written = '0'; Verified = '8'; Total = '8'
-            Reason = "$dup duplicates, identical"; Fields = @(); Duplicates = $dup
+            Reason = "$dup duplicates, identical"; Fields = $keepFields; Duplicates = $dup
         }
     }
 

@@ -128,7 +128,11 @@ emit_results() {
         fatal)      printf '%s ev=summary status=FATAL phase=preflight written=0 verified=0 total=8 reason=hal_unavailable\n' "$head" ;;
         abort)      printf '%s ev=summary status=ABORT phase=read written=0 verified=0 total=8 reason=state_changed_since_backup\n' "$head" ;;
         incomplete) printf '%s ev=summary status=INCOMPLETE phase=write written=2 verified=2 total=8 reason=write_failed_2\n' "$head" ;;
-        *)          printf '%s ev=summary status=OK phase=done written=8 verified=8 total=8 reason=-\n' "$head" ;;
+        *)
+            # A read never writes; the host validates that explicitly.
+            local w=8
+            [ "$id" = "read" ] && w=0
+            printf '%s ev=summary status=OK phase=done written=%s verified=8 total=8 reason=-\n' "$head" "$w" ;;
     esac
 }
 

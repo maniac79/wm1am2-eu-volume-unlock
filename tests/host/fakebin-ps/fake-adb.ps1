@@ -73,7 +73,11 @@ function New-ResultLines([string]$Payload) {
         'fatal' { 'status=FATAL phase=preflight written=0 verified=0 total=8 reason=hal_unavailable' }
         'abort' { 'status=ABORT phase=read written=0 verified=0 total=8 reason=state_changed_since_backup' }
         'incomplete' { 'status=INCOMPLETE phase=write written=2 verified=2 total=8 reason=write_failed_2' }
-        default { 'status=OK phase=done written=8 verified=8 total=8 reason=-' }
+        default {
+            # A read never writes; the host validates that explicitly.
+            if ($op -eq 'read') { 'status=OK phase=done written=0 verified=8 total=8 reason=-' }
+            else { 'status=OK phase=done written=8 verified=8 total=8 reason=-' }
+        }
     }
     $out += "$head ev=summary $sum"
     if ($resp -eq 'dup') { $out += "$head ev=summary $sum" }
