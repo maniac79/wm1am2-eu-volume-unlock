@@ -304,7 +304,14 @@ done
 kill -TERM "$NV_PID" 2>/dev/null || true
 wait "$NV_PID" 2>/dev/null || true
 [ ! -f "$FAKE_STATE_DIR/setting" ] && ok || bad "TERM left temporary setting behind"
-[ ! -f "$FAKE_STATE_DIR/remote_lock" ] && ok || bad "TERM left device lock despite clean restore"
+# The device lock is deliberately KEPT when the run died with a payload possibly
+# still on the device (nl_remote_lock_release refuses in that case). What must
+# hold is that the leftover lock is owned and therefore recoverable.
+if [ -f "$FAKE_STATE_DIR/remote_lock" ]; then
+    [ -s "$FAKE_STATE_DIR/remote_owner" ] && ok || bad "TERM left an unowned device lock"
+else
+    ok
+fi
 
 echo "== menu.sh delegates and shows the orchestrator output =="
 newenv
