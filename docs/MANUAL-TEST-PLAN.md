@@ -1,8 +1,12 @@
-# Manual hardware validation plan (current build: 0.2.5)
+# Manual hardware validation plan (written for 0.2.5; historical)
 
-**Status: with 0.2.5 the macOS items for `status`, `read`, `apply`,
-`restore-reference` and `restore` have been run on the author's unit; the
-Windows and Linux items and the interruption items have NOT.** The project author reports that the
+**This is a 0.2.5-era document, kept as evidence of that pass.** Released
+v0.2.6 is commit `a8be4de`; the host-validation fixes on the unreleased
+`fix/0.2.6-review` branch have no hardware evidence at all.
+
+**Status, for 0.2.5 only: the macOS items for `status`, `read`, `apply`,
+`restore-reference` and `restore` were run on the author's unit; the Windows
+and Linux items and the interruption items were NOT.** The project author reports that the
 original manual method worked on their NW-WM1AM2. Mock tests, CI and ZIP
 integrity checks are different evidence. Record `pass`, `fail` or `not run`
 for each step; do not turn a skipped or simulated step into hardware acceptance.

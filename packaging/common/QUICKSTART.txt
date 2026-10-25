@@ -17,14 +17,17 @@
 
    Further privileged steps DO still work in the same boot (measured), but they
    keep the player's apps broken, so reboot as soon as you are done. Restoring
-   eight fields takes about 40 seconds. If a run is interrupted: DO NOT delete
-   the lock, the recovery record or the backup, and DO NOT simply start again.
-   Keep all three, establish whether the operation completed (one read, then
-   compare the eight values with the backup) or left a partial or unknown state,
-   and follow the recovery section of the README before any further write. The
-   lock name the tool prints is information for that assessment, not an
-   instruction to delete it. The tool prints the reboot reminder after every
-   privileged step.
+   eight fields takes about 40 seconds. If a run is interrupted, in this order:
+   (1) preserve the lock, the recovery record and the backup, and start nothing;
+   (2) inspect the record and the lock's recorded owner PID without privileged
+   operations; (3) establish from that evidence whether the operation completed,
+   aborted or is unknown - a read cannot come first, because the lock refuses it;
+   (4) decide deliberately about the lock: the tool never clears it for you, a
+   live owner means wait or stop, and only a lock whose owner is gone may be
+   removed, with the reason recorded; (5) then run ONE read, compare the eight
+   values with your backup, and only then decide on a restore or a re-run.
+   The README recovery section has the full procedure. The tool prints the
+   reboot reminder after every privileged step.
    Details: docs/ZYGOTE-SINGLE-EXECUTION.md in the repository.
 
    The project author reports a successful ORIGINAL MANUAL change on one

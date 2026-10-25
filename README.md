@@ -359,7 +359,7 @@ listening; the loudness change has not been measured in dB.
 |---|---|
 | 0 | Operation completed; inspect its specific output. |
 | 3 | Read/backup phase incomplete; the NVRAM write phase did not begin. |
-| 4 | No trustworthy completion record; outcome unknown. Read current state before any further write. |
+| 4 | No trustworthy completion record; outcome unknown. Settle any lock as described under *After an interruption*, then read current state before any further write. |
 | 5 | Definite write failure; a partial state is possible. Preserve the printed backup and inspect each field. |
 | 7 | Cleanup or lock release failed; recovery required even if the operation result looked complete. Preserve the recovery record and device lock for inspection. |
 | 11 | Unsupported model, firmware or expected component/identity. |
@@ -370,11 +370,30 @@ listening; the loudness change has not been measured in dB.
 If cleanup cannot confirm absence of
 `hidden_api_blacklist_exemptions`, the tool does not automatically retry the
 restore; its protected local recovery record and the device-wide lock remain.
-Do not manually delete the setting or the lock from a generic recipe: first
-inspect the record, device and original state. A failed `restore` can have
-already written earlier fields. The tool reports that boundary; a subsequent
-write needs an assessed current state and recovery plan. Preserve the
-package's APK for future use, as well as your backups.
+A failed `restore` can have already written earlier fields. The tool reports
+that boundary; a subsequent write needs an assessed current state and recovery
+plan. Preserve the package's APK for future use, as well as your backups.
+
+**After an interruption, in this order.** The order is not cosmetic: while a
+lock is held the tool refuses a read, so a read cannot be the first step.
+
+1. **Preserve.** Do not delete the lock, the recovery record or the backup, and
+   start no further privileged step.
+2. **Inspect what is already there**, without privileged operations. The host
+   lock is `${TMPDIR:-/tmp}/nvptool.lock.<serial>/` and its `pid` file names the
+   owning host process; the device lock is `/data/local/tmp/nvptool.lock`. The
+   recovery record the tool printed is `recovery-<run>-<op>.state` in the backup
+   directory, holding serial, run, operation, the original setting state and the
+   remote lock path. Check whether the recorded host process still exists.
+3. **Establish the outcome from that evidence** - exit code, recorded phase,
+   whether cleanup was verified - not from a device read, which the lock blocks.
+4. **Decide about the lock deliberately.** The tool never clears a lock for you
+   and has no bypass. A live owner means wait for it or stop it; never take over
+   its run. Only when the owner is gone and the record shows the run cannot
+   continue may that one lock be removed, with the reason recorded. Never remove
+   a lock or setting you cannot explain.
+5. **Only then read once**, compare the eight values with the backup, and decide
+   between a restore, a re-run or no action.
 
 ### The procedure: one privileged operation per boot, then reboot
 
