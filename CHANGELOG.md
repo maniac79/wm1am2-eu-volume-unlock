@@ -4,10 +4,11 @@ Versioning: this is an **experimental** project. A `0.x` version can change
 or be withdrawn. A successful original manual method is not hardware
 validation of later packaged implementations.
 
-`v0.2.2` remains available as an older experimental pre-release with known
-issues. Older 0.1.0, 0.2.0 and 0.2.1 binaries were withdrawn; their Git tags
-remain for traceability. An entry here is not evidence that a build passed CI,
-that an asset was published or that physical hardware was tested.
+**Download policy: exactly one release is downloadable - the latest.** From 0.2.5
+onward every earlier release has its binaries withdrawn, including the 0.2.2
+pre-release that was previously kept alongside; their Git tags remain for
+traceability. An entry here is not evidence that a build passed CI, that an asset
+was published or that physical hardware was tested.
 
 ---
 
