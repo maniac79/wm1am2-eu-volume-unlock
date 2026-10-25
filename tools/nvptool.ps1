@@ -394,6 +394,7 @@ function Assert-Result {
     # returned byte-identical values. Writes never take this path.
     if ($begins.Count -gt 1) {
         $byPid = @{}
+        $okCount = 0
         foreach ($l in $lines) {
             $p = Get-Token $l 'pid'
             if (-not $p) { Fail 'malformed duplicate execution records (no pid)' 4 }
@@ -403,7 +404,15 @@ function Assert-Result {
             if ($l -match 'ev=begin') { $byPid[$p].Begin++ }
             elseif ($l -match 'ev=summary') {
                 $byPid[$p].Sum++
-                if ((Get-Token $l 'status') -ne 'OK') { Fail 'duplicate execution was not OK: outcome UNKNOWN' 4 }
+                $st = Get-Token $l 'status'
+                $rs = Get-Token $l 'reason'
+                # apply is digest-bound: after one execution has written, the other
+                # aborts with state_changed_since_backup. That abort is the
+                # signature of exactly one successful write, not a failure.
+                $benign = ($st -eq 'OK') -or
+                          ($Op -ne 'read' -and $st -eq 'ABORT' -and $rs -eq 'state_changed_since_backup')
+                if (-not $benign) { Fail "duplicate execution reported $st ($rs)" 4 }
+                if ($st -eq 'OK') { $okCount++ }
                 if ($Op -eq 'read' -and (Get-Token $l 'written') -ne '0') {
                     Fail 'duplicate read wrote: refusing' 4
                 }
@@ -411,8 +420,12 @@ function Assert-Result {
                 $byPid[$p].Fields[(Get-Token $l 'idx')] = (Get-Token $l 'val')
             }
         }
+        if ([int]$okCount -lt 1) { Fail 'no successful execution among the duplicates' 4 }
         foreach ($p in $byPid.Keys) {
-            if ($byPid[$p].Begin -ne 1 -or $byPid[$p].Sum -ne 1 -or $byPid[$p].Fields.Count -ne 8) {
+            if ($byPid[$p].Begin -ne 1 -or $byPid[$p].Sum -ne 1) {
+                Fail 'malformed duplicate execution records' 4
+            }
+            if ($Op -eq 'read' -and $byPid[$p].Fields.Count -ne 8) {
                 Fail 'malformed duplicate execution records' 4
             }
         }

@@ -474,23 +474,28 @@ nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
 # acceptable *only* when every execution is read-only and every execution saw
 # byte-identical values: the result is then the same as one execution would have
 # produced. Anything else is refused. Writes never take this path.
-# A write path may legitimately execute twice (the second run finds the values
-# already in place and writes nothing). What must never pass is an execution that
-# failed: every summary has to report status=OK, because each one verifies its own
-# write by reading the field back. Writes are idempotent, so a repeated write of
-# the same value is harmless; a *failed* repeat is not success.
+# A write path may legitimately execute twice. For apply, the second execution is
+# digest-bound and therefore *aborts* with state_changed_since_backup once the
+# first one has written - that abort is the signature of exactly one successful
+# write, not a failure. Accepted outcomes, per execution:
+#   * status=OK                                    (wrote, or found nothing to do)
+#   * status=ABORT reason=state_changed_since_backup  (another execution already wrote)
+# Anything else - FATAL, INCOMPLETE, REFUSED, unknown reason - fails the command.
 nl_parse_multi_write() {
-    local f="$NL_RUN_DIR/result.txt" nsum nok
+    local f="$NL_RUN_DIR/result.txt" nsum nok nbenign bad
     nsum=$(grep -c 'ev=summary' "$f" || true)
-    nok=$(grep 'ev=summary' "$f" | grep -c 'status=OK' || true)
     [ "${nsum:-0}" -gt 0 ] || { NL_PARSE_ERR="no_summary"; return 3; }
-    [ "$nsum" = "$nok" ] || { NL_PARSE_ERR="not_all_ok"; return 3; }
+    nok=$(grep 'ev=summary' "$f" | grep -c 'status=OK' || true)
+    nbenign=$(grep 'ev=summary' "$f" | grep -c 'status=ABORT .*reason=state_changed_since_backup' || true)
+    bad=$((nsum - nok - nbenign))
+    [ "$bad" -eq 0 ] || { NL_PARSE_ERR="not_all_ok"; return 3; }
+    [ "${nok:-0}" -gt 0 ] || { NL_PARSE_ERR="no_successful_execution"; return 3; }
     NL_STATUS=OK
-    NL_WRITTEN=$(grep 'ev=summary' "$f" | sed -n 's/.*written=\([0-9][0-9]*\).*/\1/p' | sort -u | tr '\n' ',' | sed 's/,$//')
+    NL_WRITTEN=$(grep 'ev=summary' "$f" | grep 'status=OK' | sed -n 's/.*written=\([0-9][0-9]*\).*/\1/p' | sort -u | tr '\n' ',' | sed 's/,$//')
     NL_VERIFIED=8; NL_TOTAL=8
     NL_DUPLICATES=$((nsum - 1))
     NL_FIELDS=$(grep -c 'ev=field' "$f" || true)
-    NL_REASON="$nsum executions, all verified"
+    NL_REASON="$nsum executions, one wrote, rest benign"
     return 0
 }
 

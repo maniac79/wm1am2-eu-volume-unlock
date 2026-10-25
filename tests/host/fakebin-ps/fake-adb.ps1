@@ -95,10 +95,18 @@ if ($sub -eq '-s') {
     switch ($rest[0]) {
         'push' {
             Set-Content -LiteralPath (Join-Path $S 'pending') -Value (New-ResultLines $rest[1])
-            if ($env:FAKE_DUP_LATE -eq '1') {
+            # FAKE_DUP_LATE=1  -> second execution with identical records (read)
+            # FAKE_DUP_ABORT=1 -> apply only: second execution aborts because the
+            #                     first already wrote (digest-bound, as on hardware)
+            $pushIsApply = ((Get-Content -LiteralPath $rest[1] -Raw) -match 'nvptool\.Apply')
+            $late = ($env:FAKE_DUP_LATE -eq '1') -or (($env:FAKE_DUP_ABORT -eq '1') -and $pushIsApply)
+            if ($late) {
+                $savedResp = $env:FAKE_RESPONSE_WRITE
+                if (($env:FAKE_DUP_ABORT -eq '1') -and $pushIsApply) { $env:FAKE_RESPONSE_WRITE = 'abort' }
                 $script:FakePid = if ($env:FAKE_PID2) { [int]$env:FAKE_PID2 } else { 4202 }
                 Set-Content -LiteralPath (Join-Path $S 'pending_late') -Value (New-ResultLines $rest[1])
                 $script:FakePid = if ($env:FAKE_PID) { [int]$env:FAKE_PID } else { 4201 }
+                $env:FAKE_RESPONSE_WRITE = $savedResp
                 Remove-Item -LiteralPath (Join-Path $S 'lc_reads') -ErrorAction SilentlyContinue
             }
             exit 0

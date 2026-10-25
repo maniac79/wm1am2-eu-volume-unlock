@@ -80,7 +80,7 @@ function New-Env {
                      'FAKE_SETTINGS_RESTORE_FAIL', 'FAKE_SETTINGS_GET_FAIL',
                      'FAKE_SETTINGS_LIST_FAIL', 'FAKE_START_FAIL', 'FAKE_APP_MISSING',
                      'FAKE_INSTALLED_APK', 'FAKE_PULL_FAIL', 'FAKE_INSTALL_FAIL',
-                     'NVPTOOL_SERIAL', 'FAKE_DUP_LATE', 'FAKE_PID', 'FAKE_PID2', 'FAKE_NO_CLAIM', 'FAKE_DUP_SKIPPED',
+                     'NVPTOOL_SERIAL', 'FAKE_DUP_LATE', 'FAKE_PID', 'FAKE_PID2', 'FAKE_NO_CLAIM', 'FAKE_DUP_SKIPPED', 'FAKE_DUP_ABORT',
                      'NVPTOOL_ALLOW_UNVALIDATED_WRITE',
                      'NVPTOOL_ALLOW_NON_BASELINE_RESTORE')) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
@@ -392,6 +392,13 @@ Write-Host '== a claimed-out duplicate is reported, not fatal =='
 $r = Run-Nv @('read')
 Check 'claimed duplicate rc 0' ($r.Rc -eq 0)
 Check 'duplicate is counted' ($r.Out -match 'claimed out')
+
+Write-Host '== a duplicate execution that aborted because the first already wrote is benign =='
+[void](New-Env); $env:FAKE_DUP_ABORT = '1'
+$r = Run-Nv @('apply')
+Check 'apply with aborting duplicate rc 0' ($r.Rc -eq 0)
+Check 'apply still reports verified' ($r.Out -match 'apply OK')
+Check 'apply states the reboot step' ($r.Out -match 'REBOOT REQUIRED')
 
 Write-Host ''
 Write-Host "PASS=$($script:Pass) FAIL=$($script:Fail)"

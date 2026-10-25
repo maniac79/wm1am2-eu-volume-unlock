@@ -234,10 +234,23 @@ if [ "$sub" = "-s" ]; then
         cp "$1" "$S/payload.txt" 2>/dev/null || true
         emit_results "$S/payload.txt" > "$S/pending"
         # A second execution of the same request, reported with a different pid.
-        # It is only released into the buffer after the host has seen the first
-        # summary, which is what FAKE_DUP_LATE=1 reproduces.
-        if [ "${FAKE_DUP_LATE:-0}" = "1" ]; then
-            FAKE_PID="${FAKE_PID2:-4202}" emit_results "$S/payload.txt" > "$S/pending_late"
+        # FAKE_DUP_LATE=1   -> identical records (the read case)
+        # FAKE_DUP_ABORT=1  -> apply only: the second execution aborts because the
+        #                      first already wrote (state_changed_since_backup),
+        #                      which is what the digest-bound apply path does on
+        #                      hardware
+        dup_late=0
+        [ "${FAKE_DUP_LATE:-0}" = "1" ] && dup_late=1
+        if [ "${FAKE_DUP_ABORT:-0}" = "1" ] && grep -q 'nvptool.Apply' "$S/payload.txt" 2>/dev/null; then
+            dup_late=1
+        fi
+        if [ "$dup_late" = "1" ]; then
+            late_resp="${FAKE_RESPONSE_WRITE:-ok}"
+            if [ "${FAKE_DUP_ABORT:-0}" = "1" ] && grep -q 'nvptool.Apply' "$S/payload.txt" 2>/dev/null; then
+                late_resp=abort
+            fi
+            FAKE_PID="${FAKE_PID2:-4202}" FAKE_RESPONSE_WRITE="$late_resp" \
+                emit_results "$S/payload.txt" > "$S/pending_late"
             rm -f "$S/lc_reads"
         fi
         exit 0
