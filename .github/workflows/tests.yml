@@ -13,8 +13,22 @@ jobs:
   windows-powershell51:
     name: Windows / Windows PowerShell 5.1 (simulated adb, no device)
     runs-on: windows-latest
+    needs: linux-bash
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-test-key-archives
+          path: dist
+      - name: Prepare bundled APK for source orchestration tests
+        shell: powershell
+        run: |
+          $z = @(Get-ChildItem dist/wm1am2-nvptool-windows-*-ci.zip)
+          if ($z.Count -ne 1) { throw 'expected exactly one Windows candidate archive' }
+          Expand-Archive -LiteralPath $z[0].FullName -DestinationPath "$env:RUNNER_TEMP\candidate"
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\candidate\wm1am2-nvptool-windows\nvptool.apk" out/nvptool.apk
+          Copy-Item "$env:RUNNER_TEMP\candidate\wm1am2-nvptool-windows\SOURCE-COMMIT.txt" out/SOURCE-COMMIT.txt
 
       - name: Host version
         shell: powershell
@@ -30,7 +44,8 @@ jobs:
             'tools/inject.ps1',
             'packaging/windows/menu.ps1',
             'tests/host/fakebin-ps/fake-adb.ps1',
-            'tests/windows/run_tests.ps1'
+            'tests/windows/run_tests.ps1',
+            'tests/packaging/check_windows_archive.ps1'
           )
           $bad = $false
           foreach ($f in $files) {
@@ -52,11 +67,32 @@ jobs:
         run: |
           ./tests/windows/run_tests.ps1 -PowerShellHost powershell
 
+      - name: Shipped Windows archive smoke (simulated adb)
+        shell: powershell
+        env:
+          NVPTOOL_ARCHIVE_VARIANT: ci
+        run: |
+          ./tests/packaging/check_windows_archive.ps1 -PowerShellHost powershell
+
   windows-pwsh:
     name: Windows / PowerShell 7+ (simulated adb, no device)
     runs-on: windows-latest
+    needs: linux-bash
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-test-key-archives
+          path: dist
+      - name: Prepare bundled APK for source orchestration tests
+        shell: pwsh
+        run: |
+          $z = @(Get-ChildItem dist/wm1am2-nvptool-windows-*-ci.zip)
+          if ($z.Count -ne 1) { throw 'expected exactly one Windows candidate archive' }
+          Expand-Archive -LiteralPath $z[0].FullName -DestinationPath "$env:RUNNER_TEMP/candidate"
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item "$env:RUNNER_TEMP/candidate/wm1am2-nvptool-windows/nvptool.apk" out/nvptool.apk
+          Copy-Item "$env:RUNNER_TEMP/candidate/wm1am2-nvptool-windows/SOURCE-COMMIT.txt" out/SOURCE-COMMIT.txt
 
       - name: Host version
         shell: pwsh
@@ -72,7 +108,8 @@ jobs:
             'tools/inject.ps1',
             'packaging/windows/menu.ps1',
             'tests/host/fakebin-ps/fake-adb.ps1',
-            'tests/windows/run_tests.ps1'
+            'tests/windows/run_tests.ps1',
+            'tests/packaging/check_windows_archive.ps1'
           )
           $bad = $false
           foreach ($f in $files) {
@@ -92,6 +129,13 @@ jobs:
         run: |
           ./tests/windows/run_tests.ps1 -PowerShellHost pwsh
 
+      - name: Shipped Windows archive smoke (simulated adb)
+        shell: pwsh
+        env:
+          NVPTOOL_ARCHIVE_VARIANT: ci
+        run: |
+          ./tests/packaging/check_windows_archive.ps1 -PowerShellHost pwsh
+
   linux-bash:
     name: Linux (bash suites, simulated adb, no device)
     runs-on: ubuntu-latest
@@ -106,8 +150,69 @@ jobs:
       - name: Java payload tests (mock HAL)
         run: ./tests/host/run_java_tests.sh
 
+      - name: Documentation consistency (menus vs QUICKSTART vs README vs code)
+        run: ./tests/docs/check_docs.sh
+
+      # An ephemeral CI key is intentionally different from the maintainer key.
+      # These archives test the exact packaging/launch paths; they are never
+      # eligible for an official release and must never be published as one.
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned Android SDK build inputs
+        run: sdkmanager --install 'platforms;android-34' 'build-tools;34.0.0'
+
+      - name: Create ephemeral CI signing key without password arguments
+        shell: bash
+        run: |
+          umask 077
+          openssl rand -hex 32 > "$RUNNER_TEMP/nvptool-ci.pass"
+          keytool -genkeypair -keystore "$RUNNER_TEMP/nvptool-ci.p12" \
+            -storetype PKCS12 -storepass:file "$RUNNER_TEMP/nvptool-ci.pass" \
+            -keypass:file "$RUNNER_TEMP/nvptool-ci.pass" -alias nvptool \
+            -keyalg RSA -keysize 2048 -validity 2 \
+            -dname 'CN=nvptool ephemeral CI key' >/dev/null
+
+      - name: Build, verify receipt and package CI candidate
+        shell: bash
+        env:
+          NVPTOOL_SIGNING_MODE: ci
+          NVPTOOL_BUILD_TOOLS_VERSION: 34.0.0
+          NVPTOOL_PLATFORM_API: '34'
+        run: |
+          export NVPTOOL_KEYSTORE="$RUNNER_TEMP/nvptool-ci.p12"
+          export NVPTOOL_KEYSTORE_PASSFILE="$RUNNER_TEMP/nvptool-ci.pass"
+          ./tools/build.sh
+          ./packaging/make_release.sh --allow-test-key
+          python3 tools/release_receipt.py verify --root "$PWD" \
+            --apk out/nvptool.apk --receipt out/build-receipt.json --allow-test-key
+
       - name: Bash host tests (fake adb)
         run: ./tests/host/run_shell_tests.sh
 
-      - name: Documentation consistency (menus vs QUICKSTART vs README vs code)
-        run: ./tests/docs/check_docs.sh
+      - name: Shipped Linux archive smoke (simulated adb)
+        env:
+          NVPTOOL_ARCHIVE_VARIANT: ci
+        run: ./tests/packaging/check_unix_archive.sh linux
+
+      - name: Build receipt rejects stale APK and official use of test key
+        run: ./tests/packaging/check_receipt.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-test-key-archives
+          path: dist/*.zip
+          if-no-files-found: error
+
+  macos-archive:
+    name: macOS (shipped archive, simulated adb, no device)
+    runs-on: macos-latest
+    needs: linux-bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-test-key-archives
+          path: dist
+      - name: Shipped macOS archive smoke (simulated adb)
+        env:
+          NVPTOOL_ARCHIVE_VARIANT: ci
+        run: ./tests/packaging/check_unix_archive.sh macos

@@ -59,8 +59,9 @@ function Run-Action([string]$Label, [string[]]$NvArgs) {
     # Out-Host, not a bare call: every call site discards the function's return
     # value with [void](...), which would also discard the orchestrator's stdout -
     # the user would see the header and nothing else.
-    & $PSExe -NoProfile -ExecutionPolicy Bypass -File $NV @NvArgs | Out-Host
+    $output = @(& $PSExe -NoProfile -ExecutionPolicy Bypass -File $NV @NvArgs 2>&1)
     $rc = $LASTEXITCODE
+    $output | Out-Host
     if ($rc -ne 0) {
         Write-Host ''
         Write-Host "  The operation did not complete successfully (exit code $rc)."
@@ -86,6 +87,7 @@ while ($true) {
     Write-Host '  4) Restore from backup  per-field restore, verified'
     Write-Host '  5) Reboot the player'
     Write-Host '  6) Requirements / where is adb'
+    Write-Host '  7) Install/update bundled helper APK (no NVRAM write)'
     Write-Host '  0) Exit'
     Write-Host ''
     Write-Host "  Advanced:  type 'restore-ref' for the built-in reference profile,"
@@ -123,6 +125,17 @@ while ($true) {
         }
         '5' { [void](Run-Action 'Rebooting' @('reboot')); Pause-Menu }
         '6' { Show-Requirements }
+        '7' {
+            Write-Hr
+            Write-Host '  Installs the verified bundled nvptool.apk on the player.'
+            Write-Host '  Android accepts an upgrade only with the same signing certificate.'
+            Write-Host '  This does not uninstall another app or write NVRAM.'
+            Write-Hr
+            if (Confirm-Yes 'Install/update helper APK?') {
+                [void](Run-Action 'Installing helper APK' @('install'))
+                Pause-Menu
+            }
+        }
         'restore-ref' {
             Write-Hr
             Write-Host '  ADVANCED: writes the reference profile recorded from one unit.'

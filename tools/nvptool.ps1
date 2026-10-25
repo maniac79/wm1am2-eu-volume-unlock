@@ -1,6 +1,6 @@
 # nvptool.ps1 - native Windows host orchestrator (parity with nvptool.sh)
 #
-#   status | read | apply | restore [file] | restore-reference | reboot
+#   status | install | read | apply | restore [file] | restore-reference | reboot
 #
 # Same Java payload, guards and backup format (byte-identical to the bash
 # implementation, so backups are interchangeable). Exit codes:
@@ -16,7 +16,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------- constants
-$ToolVersion = '0.2.2'
+$ToolVersion = '0.2.3'
 $Schema      = '1'
 $Pkg         = 'org.maniac79.nvptool'
 $Hal         = '/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk'
@@ -39,17 +39,37 @@ $script:Serial = ''
 $script:SettingsState = ''
 $script:SettingsCaptured = $false
 $script:SettingsTouched = $false
+$script:CleanupAttempted = $false
 $script:RunDir = ''
+$script:CleanupOk = $true
+$script:RemoteLockHeld = $false
+$script:RemoteLock = '/data/local/tmp/nvptool.lock'
+$script:RecoveryRecord = ''
+$script:RemotePayloads = @()
 
 function Fail([string]$Message, [int]$Code = 1) {
-    [Console]::Error.WriteLine("nvptool: $Message")
-    exit $Code
+    $e = New-Object System.Exception("nvptool: $Message")
+    $e.Data['ExitCode'] = $Code
+    throw $e
 }
 
 # ------------------------------------------------------------------ helpers
 function Get-AdbCommand {
     # Test harness hook: point NVPTOOL_ADB at a simulator. Otherwise real adb.
-    if ($env:NVPTOOL_ADB) { return $env:NVPTOOL_ADB }
+    if ($env:NVPTOOL_ADB) {
+        if (-not [System.IO.Path]::IsPathRooted($env:NVPTOOL_ADB) -or
+            -not (Test-Path -LiteralPath $env:NVPTOOL_ADB -PathType Leaf)) {
+            Fail 'NVPTOOL_ADB must be an absolute path to an existing adb executable' 2
+        }
+        return $env:NVPTOOL_ADB
+    }
+    # The archive is flat; source checkouts keep the script under tools/.
+    foreach ($base in @($PSScriptRoot, (Split-Path $PSScriptRoot -Parent))) {
+        $sibling = Join-Path $base 'platform-tools/adb.exe'
+        if (Test-Path -LiteralPath $sibling -PathType Leaf) { return $sibling }
+        $sibling = Join-Path $base 'platform-tools/adb'
+        if (Test-Path -LiteralPath $sibling -PathType Leaf) { return $sibling }
+    }
     $c = Get-Command adb -ErrorAction SilentlyContinue
     if ($c) { return $c.Source }
     Fail 'adb not found in PATH' 2
@@ -109,15 +129,64 @@ function Assert-Preflight {
     if ($t.Code -ne 0) { Fail "HAL apk not readable at $Hal" 11 }
 }
 
+function Get-BundledApk {
+    foreach ($base in @($PSScriptRoot, (Split-Path $PSScriptRoot -Parent))) {
+        $apk = Join-Path $base 'nvptool.apk'
+        $receipt = Join-Path $base 'SOURCE-COMMIT.txt'
+        if (-not (Test-Path -LiteralPath $apk) -or -not (Test-Path -LiteralPath $receipt)) { continue }
+        $matches = @((Get-Content -LiteralPath $receipt) | Where-Object { $_ -match '^apk_sha256=[0-9a-f]{64}$' })
+        if ($matches.Count -ne 1) { Fail 'bundle has no unique APK hash receipt' }
+        $expected = $matches[0].Substring(11)
+        $actual = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) { Fail 'bundled APK does not match SOURCE-COMMIT.txt; obtain a verified package' }
+        return [pscustomobject]@{ Path = $apk; Hash = $expected }
+    }
+    $root = Split-Path $PSScriptRoot -Parent
+    $apk = Join-Path $root 'out/nvptool.apk'
+    $receipt = Join-Path $root 'out/build-receipt.json'
+    if ((Test-Path -LiteralPath $apk) -and (Test-Path -LiteralPath $receipt)) {
+        $r = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+        $expected = [string]$r.apk.sha256
+        if ($expected -notmatch '^[0-9a-f]{64}$') { Fail 'source build receipt has no APK hash' }
+        $actual = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) { Fail 'source APK does not match build receipt' }
+        return [pscustomobject]@{ Path = $apk; Hash = $expected }
+    }
+    Fail 'nvptool.apk and SOURCE-COMMIT.txt are required next to this tool'
+}
+
+function Get-InstalledApkPath {
+    $r = Invoke-Adb '-s' $script:Serial 'shell' "pm path $Pkg"
+    if ($r.Code -ne 0) { Fail 'could not query installed helper APK path' }
+    $paths = @($r.Output | Where-Object { $_ -match '^package:(/.*/base\.apk)\s*$' } |
+        ForEach-Object { ($_ -replace '^package:', '').Trim() })
+    if ($paths.Count -eq 0) { return '' }
+    if ($paths.Count -ne 1 -or $paths[0] -notmatch '^/data/app/[A-Za-z0-9_./~+=-]+/base\.apk$') {
+        Fail 'installed helper APK path is ambiguous or unsafe'
+    }
+    return $paths[0]
+}
+
 function Assert-AppVersion {
-    $path = Invoke-AdbText '-s' $script:Serial 'shell' "pm path $Pkg"
-    if ($path -notmatch 'package:') { Fail 'helper app is not installed' }
-    $dump = Invoke-AdbText '-s' $script:Serial 'shell' "dumpsys package $Pkg"
+    $apkPath = Get-InstalledApkPath
+    if (-not $apkPath) { Fail 'helper app is not installed; use menu option 7 or nvptool.ps1 install before this operation' }
+    $dumpResult = Invoke-Adb '-s' $script:Serial 'shell' "dumpsys package $Pkg"
+    if ($dumpResult.Code -ne 0) { Fail 'could not query installed helper version' }
+    $dump = $dumpResult.Output -join "`n"
     $ver = ''
     foreach ($line in ($dump -split "`n")) {
         if ($line -match 'versionName=(\S+)') { $ver = $Matches[1]; break }
     }
-    if ($ver -ne $ToolVersion) { Fail "installed app version '$ver' does not match tool version $ToolVersion" }
+    if ($ver -ne $ToolVersion) { Fail "installed app version '$ver' does not match tool version $ToolVersion; use menu option 7 or nvptool.ps1 install" }
+    $bundle = Get-BundledApk
+    $pulled = Join-Path $script:RunDir 'installed-base.apk'
+    $pull = Invoke-Adb '-s' $script:Serial 'pull' $apkPath $pulled
+    if ($pull.Code -ne 0 -or -not (Test-Path -LiteralPath $pulled)) {
+        Fail 'could not read installed helper APK; refusing privileged spawn'
+    }
+    $got = (Get-FileHash -LiteralPath $pulled -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($got -ne $bundle.Hash) { Fail 'installed helper APK bytes differ from the verified bundled APK; use menu option 7 or nvptool.ps1 install' }
+    $script:InstalledApkPath = $apkPath
 }
 
 
@@ -125,35 +194,39 @@ function Assert-AppVersion {
 # Captured once per command. Re-capturing per phase would launder a phase's
 # failed cleanup into the next phase's "original" and report a false success.
 function Read-SettingsState {
-    $v = Invoke-AdbText '-s' $script:Serial 'shell' 'settings get global hidden_api_blacklist_exemptions'
-    if ($v -eq 'null') { return 'absent' }
-    if ($v -eq '') { return 'empty' }
-    return "value:$v"
+    $list = Invoke-Adb '-s' $script:Serial 'shell' 'settings list global'
+    if ($list.Code -ne 0) { Fail 'settings list failed; refusing mutation' }
+    if (@($list.Output | Where-Object { $_ -match '^hidden_api_blacklist_exemptions=' }).Count -gt 0) {
+        Fail 'hidden_api_blacklist_exemptions already exists; refusing to overwrite an untransportable original value' 12
+    }
+    $get = Invoke-Adb '-s' $script:Serial 'shell' 'settings get global hidden_api_blacklist_exemptions'
+    if ($get.Code -ne 0) { Fail 'settings get failed; refusing mutation' }
+    if ($get.Output.Count -ne 1 -or $get.Output[0] -ne 'null') {
+        Fail 'settings state is ambiguous; refusing mutation'
+    }
+    return 'absent'
 }
 
 function Capture-Settings {
     if ($script:SettingsCaptured) { return }
     $script:SettingsState = Read-SettingsState
+    $dir = Get-BackupDir
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $script:RecoveryRecord = Join-Path $dir "recovery-$($script:OperationId).txt"
+    $record = "serial=$($script:Serial)`nrun=$($script:OperationId)`noriginal=absent`nremote_lock=$($script:RemoteLock)`ncreated=$((Get-Date).ToUniversalTime().ToString('o'))`n"
+    [System.IO.File]::WriteAllText($script:RecoveryRecord, $record, (New-Object System.Text.UTF8Encoding($false)))
     $script:SettingsCaptured = $true
     $script:SettingsTouched = $false
 }
 
 function Restore-Settings {
     if (-not $script:SettingsTouched) { return $true }
-    switch -Wildcard ($script:SettingsState) {
-        'absent' {
-            [void](Invoke-Adb '-s' $script:Serial 'shell' 'settings delete global hidden_api_blacklist_exemptions')
-        }
-        'empty' {
-            [void](Invoke-Adb '-s' $script:Serial 'shell' 'settings put global hidden_api_blacklist_exemptions ""')
-        }
-        'value:*' {
-            $orig = $script:SettingsState.Substring(6)
-            [void](Invoke-Adb '-s' $script:Serial 'shell' "settings put global hidden_api_blacklist_exemptions `"$orig`"")
-        }
-    }
-    $after = Read-SettingsState
-    return ($after -eq $script:SettingsState)
+    $deleted = Invoke-Adb '-s' $script:Serial 'shell' 'settings delete global hidden_api_blacklist_exemptions'
+    if ($deleted.Code -ne 0) { return $false }
+    try { $after = Read-SettingsState } catch { return $false }
+    if ($after -ne 'absent') { return $false }
+    $script:SettingsTouched = $false
+    return $true
 }
 
 
@@ -191,16 +264,10 @@ function Get-CanonicalDigest {
 }
 
 # --------------------------------------------------------------- privileged
-$script:RemotePayload = '/data/local/tmp/nvptool_payload.txt'
-
 function New-Payload {
     param([string]$Class, [string]$RunId, [string[]]$Extra)
-    $apk = Invoke-AdbText '-s' $script:Serial 'shell' "pm path $Pkg"
-    $apkPath = ''
-    foreach ($line in ($apk -split "`n")) {
-        if ($line -match '^package:(.+)$') { $apkPath = $Matches[1].Trim(); break }
-    }
-    if (-not $apkPath) { Fail 'helper app is not installed' }
+    $apkPath = $script:InstalledApkPath
+    if (-not $apkPath) { Fail 'installed helper was not verified' }
 
     $extraText = ''
     if ($Extra -and $Extra.Count -gt 0) { $extraText = ' ' + ($Extra -join ' ') }
@@ -221,40 +288,51 @@ function New-Payload {
 function Invoke-NvpClass {
     param([string]$Class, [string]$Op, [string]$RunId, [string[]]$Extra = @())
 
+    Assert-AppVersion
     $file = New-Payload -Class $Class -RunId $RunId -Extra $Extra
     Capture-Settings
+    if ((Read-SettingsState) -ne 'absent') { Fail 'settings changed before phase' }
+    # The run id is generated internally and contains only digits and hyphens.
+    $remote = "/data/local/tmp/nvptool-$RunId-$Op.txt"
+    $script:RemotePayloads += $remote
+    $script:CleanupAttempted = $false
+    try {
+        $push = Invoke-Adb '-s' $script:Serial 'push' $file $remote
+        if ($push.Code -ne 0) { Fail 'could not push payload (settings untouched)' }
+        $script:SettingsTouched = $true
+        $set = Invoke-Adb '-s' $script:Serial 'shell' `
+            "settings put global hidden_api_blacklist_exemptions `"`$(cat $remote)`""
+        if ($set.Code -ne 0) { Fail 'could not install payload' }
 
-    $push = Invoke-Adb '-s' $script:Serial 'push' $file $script:RemotePayload
-    if ($push.Code -ne 0) { Fail 'could not push payload (settings untouched)' }
-    $script:SettingsTouched = $true
+        $stopped = Invoke-Adb '-s' $script:Serial 'shell' 'am force-stop com.android.settings'
+        if ($stopped.Code -ne 0) { Fail 'could not restart settings after payload' 4 }
+        $started = Invoke-Adb '-s' $script:Serial 'shell' 'am start -a android.settings.SETTINGS'
+        if ($started.Code -ne 0) { Fail 'could not launch settings after payload' 4 }
 
-    $set = Invoke-Adb '-s' $script:Serial 'shell' `
-        "settings put global hidden_api_blacklist_exemptions `"`$(cat $script:RemotePayload)`""
-    if ($set.Code -ne 0) {
-        [void](Restore-Settings)
-        Fail 'could not install payload'
-    }
-
-    [void](Invoke-Adb '-s' $script:Serial 'shell' 'am force-stop com.android.settings')
-    [void](Invoke-Adb '-s' $script:Serial 'shell' 'am start -a android.settings.SETTINGS')
-
-    $lines = @()
-    for ($i = 0; $i -lt 20; $i++) {
-        Start-Sleep -Seconds 1
-        $raw = Invoke-Adb '-s' $script:Serial 'shell' 'logcat -d -s NVPTOOL:V'
-        $lines = @($raw.Output | Where-Object { $_ -match [regex]::Escape("run=$RunId ") })
-        if ($lines | Where-Object { $_ -match 'ev=summary' }) { break }
-    }
-
-    $resultFile = Join-Path $script:RunDir 'result.txt'
-    $lines | Set-Content -Path $resultFile -Encoding UTF8
-
-    [void](Invoke-Adb '-s' $script:Serial 'shell' "rm -f $script:RemotePayload")
-    $script:CleanupOk = Restore-Settings
-
-    return [pscustomobject]@{
-        Found = [bool]($lines | Where-Object { $_ -match 'ev=summary' })
-        File  = $resultFile
+        $lines = @()
+        for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Seconds 1
+            $raw = Invoke-Adb '-s' $script:Serial 'shell' 'logcat -d -s NVPTOOL:V'
+            if ($raw.Code -ne 0) { Fail 'logcat failed: operation outcome unknown' 4 }
+            $lines = @($raw.Output | Where-Object { $_ -match [regex]::Escape("run=$RunId ") })
+            if ($lines | Where-Object { $_ -match 'ev=summary' }) { break }
+        }
+        $resultFile = Join-Path $script:RunDir "result-$RunId.txt"
+        $lines | Set-Content -Path $resultFile -Encoding UTF8
+        return [pscustomobject]@{
+            Found = [bool]($lines | Where-Object { $_ -match 'ev=summary' })
+            File = $resultFile
+        }
+    } finally {
+        # The setting is restored before the payload is removed. On failure the
+        # lock and recovery record remain, preventing a second unsafe run.
+        $script:CleanupAttempted = $true
+        try { $script:CleanupOk = (Restore-Settings) -and $script:CleanupOk }
+        catch { $script:CleanupOk = $false }
+        try {
+            $removed = Invoke-Adb '-s' $script:Serial 'shell' "rm -f $remote"
+            if ($removed.Code -ne 0) { $script:CleanupOk = $false }
+        } catch { $script:CleanupOk = $false }
     }
 }
 
@@ -455,48 +533,73 @@ function Get-LatestBaseline {
 
 function Assert-Cleanup([string]$Op) {
     if ($script:CleanupOk) { return }
-    [Console]::Error.WriteLine(
-        "nvptool: $Op finished, but hidden_api_blacklist_exemptions could NOT be restored.`n" +
+    Fail (
+        "$Op finished, but hidden_api_blacklist_exemptions could NOT be restored.`n" +
         "This is recovery-required, not a clean success.`n" +
         "  Check:    adb shell settings get global hidden_api_blacklist_exemptions`n" +
-        "  Original: $($script:SettingsState)")
-    exit 7
+        "  Original: $($script:SettingsState)") 7
 }
 
 # ----------------------------------------------------------------- commands
 function New-RunId { return "$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())-$PID-$(Get-Random -Maximum 32767)" }
 
 function Acquire-Lock {
-    $lock = Join-Path ([System.IO.Path]::GetTempPath()) "nvptool.lock.$($script:Serial)"
-    if (Test-Path $lock) {
-        $pidFile = Join-Path $lock 'pid'
-        $other = ''
-        if (Test-Path $pidFile) { $other = (Get-Content -LiteralPath $pidFile -Raw).Trim() }
-        $alive = $false
-        if ($other -match '^\d+$') {
-            $alive = [bool](Get-Process -Id ([int]$other) -ErrorAction SilentlyContinue)
-        }
-        if ($alive) { Fail "another nvptool run is active for this device (pid $other)" }
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $lock
-    }
-    New-Item -ItemType Directory -Force -Path $lock | Out-Null
-    Set-Content -LiteralPath (Join-Path $lock 'pid') -Value $PID -NoNewline
-    $script:LockDir = $lock
+    $safe = $script:Serial -replace '[^A-Za-z0-9._-]', '_'
+    $lock = Join-Path ([System.IO.Path]::GetTempPath()) "nvptool.lock.$safe"
+    try {
+        $script:LocalLock = New-Object System.IO.FileStream($lock,
+            [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None)
+    } catch { Fail "another local nvptool run owns $lock; inspect before clearing a stale lock" }
+    $script:LocalLockPath = $lock
+    $remote = Invoke-Adb '-s' $script:Serial 'shell' "mkdir $($script:RemoteLock)"
+    if ($remote.Code -ne 0) { Fail "device lock $($script:RemoteLock) is held; inspect it before manual recovery" }
+    $script:RemoteLockHeld = $true
+    $owner = Invoke-Adb '-s' $script:Serial 'shell' "printf '%s' '$($script:OperationId)' > $($script:RemoteLock)/owner"
+    if ($owner.Code -ne 0) { Fail 'could not write remote lock owner record' }
 }
 
 function Release-Lock {
-    if ($script:LockDir -and (Test-Path $script:LockDir)) {
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $script:LockDir
+    if ($script:RemoteLockHeld -and $script:CleanupOk -and -not $script:SettingsTouched) {
+        try {
+            $owner = Invoke-Adb '-s' $script:Serial 'shell' "cat $($script:RemoteLock)/owner"
+            if ($owner.Code -ne 0 -or ($owner.Output -join '') -ne $script:OperationId) { $script:CleanupOk = $false }
+            else {
+                $remove = Invoke-Adb '-s' $script:Serial 'shell' "rm -f $($script:RemoteLock)/owner && rmdir $($script:RemoteLock)"
+                if ($remove.Code -ne 0) { $script:CleanupOk = $false }
+                else { $script:RemoteLockHeld = $false }
+            }
+        } catch { $script:CleanupOk = $false }
     }
-    $script:LockDir = ''
+    if ($script:LocalLock) {
+        $script:LocalLock.Dispose()
+        $script:LocalLock = $null
+        Remove-Item -LiteralPath $script:LocalLockPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Initialize-Operation {
     New-RunDir
     Select-Device
-    Acquire-Lock
     Assert-Preflight
+    $script:OperationId = New-RunId
+    Acquire-Lock
     Assert-AppVersion
+}
+
+function Invoke-InstallHelperCmd {
+    New-RunDir
+    Select-Device
+    Assert-Preflight
+    $script:OperationId = New-RunId
+    Acquire-Lock
+    $bundle = Get-BundledApk
+    Write-Output 'Installing the verified bundled helper APK. Android will accept an upgrade only with the same signing certificate.'
+    Write-Output 'No installed helper will be uninstalled.'
+    $r = Invoke-Adb '-s' $script:Serial 'install' '-r' $bundle.Path
+    if ($r.Code -ne 0) { Fail "helper installation failed: $($r.Output -join ' ')" }
+    Assert-AppVersion
+    Write-Output 'helper installed and its device APK bytes verified.'
 }
 
 function Invoke-StatusCmd {
@@ -662,6 +765,7 @@ function Invoke-RebootCmd {
 }
 
 # ----------------------------------------------------------------- dispatch
+$script:FinalCode = 0
 try {
     switch ($Command.ToLowerInvariant()) {
         'status'            { Invoke-StatusCmd }
@@ -669,14 +773,33 @@ try {
         'apply'             { Invoke-ApplyCmd }
         'restore'           { Invoke-RestoreCmd }
         'restore-reference' { Invoke-RestoreReferenceCmd }
+        'install'           { Invoke-InstallHelperCmd }
         'reboot'            { Invoke-RebootCmd }
         default {
-            Fail "unknown command: $Command (try: status read apply restore restore-reference reboot)" 64
+            Fail "unknown command: $Command (try: status install read apply restore restore-reference reboot)" 64
         }
     }
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    if ($_.Exception.Data.Contains('ExitCode')) {
+        $script:FinalCode = [int]$_.Exception.Data['ExitCode']
+    } else {
+        $script:FinalCode = 4
+    }
 } finally {
-    Release-Lock
+    if ($script:SettingsTouched -and -not $script:CleanupAttempted) {
+        try { $script:CleanupOk = (Restore-Settings) -and $script:CleanupOk }
+        catch { $script:CleanupOk = $false }
+    }
+    try { Release-Lock } catch { $script:CleanupOk = $false }
+    if ($script:CleanupOk -and -not $script:RemoteLockHeld -and $script:RecoveryRecord) {
+        Remove-Item -LiteralPath $script:RecoveryRecord -Force -ErrorAction SilentlyContinue
+    }
+    if (-not $script:CleanupOk -or $script:RemoteLockHeld) {
+        [Console]::Error.WriteLine("nvptool: cleanup incomplete; recovery-required. Original setting: $($script:SettingsState). Remote lock: $($script:RemoteLock). Recovery record: $($script:RecoveryRecord).")
+        $script:FinalCode = 7
+    }
     Remove-RunDir
 }
-exit 0
+exit $script:FinalCode
 

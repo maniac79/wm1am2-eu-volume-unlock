@@ -1,66 +1,98 @@
-# APK signing: identity, custody and the rule for future releases
+# Helper APK signing and build identities
 
-The APK is the privileged helper (`org.maniac79.nvptool`). Android only
-**upgrades** an installed app when the new APK carries the **same signing
-certificate**; anything else is refused with
-`INSTALL_FAILED_UPDATE_INCOMPATIBLE` and the old helper has to be removed first.
+Android upgrades an installed `org.maniac79.nvptool` helper only when the new
+APK uses the same signing certificate. The installed helper is then executed
+through the project's temporary privileged path, so host tools check more than
+its package name and version: they pull the installed APK and compare its
+SHA-256 with the trusted bundled APK before each privileged operation. The
+bundle's own hash must match its adjacent `SOURCE-COMMIT.txt`. A match is an
+identity check against the supplied package, not independent proof that the
+package came from the stated source commit; inspect published release hashes
+and provenance too.
 
-## Current key: dedicated release key
+## Maintainer release identity
 
-| | |
+| Item | Value |
 |---|---|
-| DN | `CN=nvptool release key, O=wm1am2-eu-volume-unlock, C=DE` |
+| Package | `org.maniac79.nvptool` |
 | Certificate SHA-256 | `c21c663d2171dcbd8bdc47c5bb5b2103a0fbf7aa349d7e5aebb67123de42c992` |
-| Key | RSA 4096, validity 30 years |
-| Keystore | `~/.nvptool/nvptool-release.jks` (PKCS#12, `0600`) |
-| Password | `~/.nvptool/keystore.pass` (`0600`), never printed, never committed |
-| Created by | `./tools/init_signing_key.sh` (refuses to overwrite) |
-| Signature scheme | APK Signature Scheme v3 only (`minSdkVersion=28`) |
+| Certificate | RSA 4096, `CN=nvptool release key, O=wm1am2-eu-volume-unlock, C=DE` |
+| Scheme | APK Signature Scheme v3, minSDK 28 |
+| 0.2.2 | `versionCode=5`, dedicated release key |
+| 0.2.3 | `versionCode=6`, **same** dedicated release certificate |
 
-`tools/build.sh` reads the password from `NVPTOOL_KEYSTORE_PASS` or that file,
-signs, then verifies the certificate against the fingerprint pinned in the
-script and **fails the build** if it differs. There is no fallback to a
-generated key: a missing keystore is a build error, not a new identity.
+`tools/build.sh` defaults to `NVPTOOL_SIGNING_MODE=release`. It requires the
+maintainer's existing keystore (normally `~/.nvptool/nvptool-release.jks`) and
+password file (`~/.nvptool/keystore.pass`) or an explicit password environment
+variable. The signing program receives `file:` or `env:` rather than a literal
+password in a process argument. The build verifies that the resulting APK's
+certificate equals the pinned SHA-256 above and writes a build receipt plus
+`out/SOURCE-COMMIT.txt`. It does not silently generate or rotate a key.
+`tools/init_signing_key.sh` creates a key only on an explicit one-time call,
+refuses to overwrite an existing key/password file and does not display the
+password. Keep both files private and backed up outside the repository.
 
-## What was signed with what
-
-| Build | versionCode / versionName | Signer |
-|---|---|---|
-| 0.1.0, 1.1.0, 0.2.0, 0.2.1 | 0 of none, 2, 3, 4 / 1.1.0, 0.2.0, 0.2.1 | shared Android debug key `a934c760…255ec1` (`CN=Android Debug`) |
-| **0.2.2 and later** | **5 / 0.2.2** | **dedicated release key `c21c663d…42c992`** |
-
-**Consequence, stated plainly:** a helper installed from any build up to 0.2.1
-cannot be upgraded to 0.2.2. It must be removed once:
+The 0.1.0–0.2.1 helper used an earlier shared debug certificate and cannot be
+upgraded in place to 0.2.2 or 0.2.3. On an installation signed with that older
+key, `install` returns Android's signing mismatch and **does not automatically
+uninstall** it. If the user has identified that old helper and chooses to
+remove it, the explicit command is:
 
 ```bash
 adb uninstall org.maniac79.nvptool
 ```
 
-That removes the helper only. **It does not undo anything**: the eight NVRAM
-values are device state, not app data, and stay exactly as they are. Running
-`install` again afterwards is safe. This rotation was acceptable because the
-project has no installed base; it is not a precedent for silent rotation.
+Uninstall removes the app, **not** the eight persistent NVRAM values or backup
+files on the host. It is not a rollback. An existing correctly signed 0.2.2
+helper can be upgraded to a matching 0.2.3 release build by explicit menu
+option 7 or CLI `install` when a verified 0.2.3 package is available. Check
+the current GitHub Assets; a source checkout is not proof of publication.
 
-## Custody
+## Independent and CI builds
 
-The keystore and its password live outside the repository, under a `0700`
-directory, and are never copied into `out/`, `dist/` or any archive. Each release
-audit checks that no key material is packaged. **Back both files up** somewhere
-off-machine: losing them means future releases cannot upgrade 0.2.2+ installs,
-and the recovery is the uninstall-first dance again.
+A new contributor does **not** have the maintainer's private release key.
+After explicitly creating/selecting their own keystore (for example with
+`./tools/init_signing_key.sh` in a separate local key location), they use
+`NVPTOOL_SIGNING_MODE=local ./tools/build.sh`. Offline CI uses
+`NVPTOOL_SIGNING_MODE=ci`. Both modes still sign and verify an APK, but their
+certificate differs from the release pin and the receipt marks it as local or
+CI. They cannot produce an official release package by default. Android will
+not upgrade a maintainer-signed installation with such an APK; do not silently
+uninstall an existing helper to force it.
 
-## The rule
+For an independent local build, point **both** commands at the same private
+key and password paths, away from any maintainer release keystore:
 
-1. **The certificate is pinned** in `tools/build.sh`; a different key fails the
-   build instead of shipping a non-upgradeable APK.
-2. **Rotation is a deliberate, announced act**: bump `versionCode`, change the
-   pin, put "uninstall the old helper first" in the release notes, and update
-   this file. Never as a side effect of a rebuild.
-3. **The package name never changes.** A rename is a different app.
-4. **Private key material is never published**: no keystore, no password, no
-   `*.jks`/`*.pass` in git or in a release asset.
-5. **No automatic uninstall** in the tools or menus. Removing an app is the
-   user's decision, and the instructions say so explicitly.
-6. **Anyone can build their own APK** with their own key; that build is a
-   different app as far as Android's update rules are concerned, which is why the
-   published fingerprint is recorded here.
+```bash
+export NVPTOOL_KEYSTORE="$HOME/.nvptool/my-local.jks"
+export NVPTOOL_KEYSTORE_PASSFILE="$HOME/.nvptool/my-local.pass"
+./tools/init_signing_key.sh
+NVPTOOL_SIGNING_MODE=local ./tools/build.sh
+```
+
+For source builds, the host's `out/SOURCE-COMMIT.txt` accompanies
+`out/nvptool.apk` and binds the local APK hash. Builds require JDK, Python 3,
+Android SDK build-tools and a platform `android.jar`. `tools/build.sh` records
+the source/build inputs in `out/build-receipt.json`; `packaging/make_release.sh`
+checks the receipt, APK package/version/certificate, source and package inputs
+before creating ZIPs. A dirty tree or local/CI key is refused for an official
+package unless the builder provides explicit `--allow-dirty` or
+`--allow-test-key` test exceptions. Such exceptions do not turn the result into
+a maintainer release. A receipt and checksum detect input drift but do not by
+themselves prove bit-for-bit reproducibility from public source.
+
+Only a clean, eligible release build uses the unsuffixed official name
+`wm1am2-nvptool-OS-0.2.3.zip`. Nonrelease archives carry a visible suffix such
+as `-ci`, `-local`, `-dirty` or `-ci-dirty` before `.zip`; they must not be
+published as official release assets. Inspect the archive's `SOURCE-COMMIT.txt`:
+an official package records `signing_mode=release`, the pinned
+`certificate_sha256`, and `release_eligible=true`.
+
+## Custody and rotation
+
+The keystore and password must stay outside Git, `out/`, `dist/` and ZIPs. A
+future certificate rotation needs an intentional version bump, new pin, user
+migration instructions and release notes. There is no automatic uninstall in
+the tools. For published archives, verify an **external** ZIP SHA-256 from the
+release notes; the internal `SHA256SUMS.txt` only checks files within the same
+ZIP. Verify APK signer and manifest before any device installation.

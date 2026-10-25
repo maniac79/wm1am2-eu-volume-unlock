@@ -10,7 +10,7 @@ Add-Content -LiteralPath (Join-Path $S 'calls.log') -Value ($Argv -join ' ')
 $devices = if ($env:FAKE_DEVICES) { $env:FAKE_DEVICES -split '\s+' } else { @('SER123') }
 $model   = if ($env:FAKE_MODEL) { $env:FAKE_MODEL } else { 'NW-WM1AM2' }
 $fp      = if ($env:FAKE_FP) { $env:FAKE_FP } else { 'SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys' }
-$ver     = if ($env:FAKE_PKGVER) { $env:FAKE_PKGVER } else { '0.2.2' }
+$ver     = if ($env:FAKE_PKGVER) { $env:FAKE_PKGVER } else { '0.2.3' }
 $dest    = if ($env:FAKE_DEST) { $env:FAKE_DEST } else { '03010000' }
 $safe    = if ($env:FAKE_SAFE) { $env:FAKE_SAFE } else { '01000000' }
 
@@ -44,7 +44,7 @@ function New-ResultLines([string]$Payload) {
         if ($env:FAKE_RESPONSE_READ) { $resp = $env:FAKE_RESPONSE_READ }
     } elseif ($env:FAKE_RESPONSE_WRITE) { $resp = $env:FAKE_RESPONSE_WRITE }
 
-    $head = "NVPTOOL_RESULT v=1 schema=1 tool=0.2.2 run=$run op=$op"
+    $head = "NVPTOOL_RESULT v=1 schema=1 tool=0.2.3 run=$run op=$op"
     $out = @()
     if ($resp -eq 'noout') { return $out }
     $out += "$head ev=begin"
@@ -90,6 +90,22 @@ if ($sub -eq '-s') {
             Set-Content -LiteralPath (Join-Path $S 'pending') -Value (New-ResultLines $rest[1])
             exit 0
         }
+        'pull' {
+            if ($env:FAKE_PULL_FAIL -eq '1') { exit 1 }
+            $source = if (Test-Path (Join-Path $S 'installed.apk')) { Join-Path $S 'installed.apk' }
+                      elseif ($env:FAKE_INSTALLED_APK) { $env:FAKE_INSTALLED_APK }
+                      else { $env:FAKE_BUNDLED_APK }
+            Copy-Item -LiteralPath $source -Destination $rest[2] -Force
+            exit 0
+        }
+        'install' {
+            if ($env:FAKE_INSTALL_FAIL -eq '1') { exit 1 }
+            Copy-Item -LiteralPath $rest[2] -Destination (Join-Path $S 'installed.apk') -Force
+            $env:FAKE_INSTALLED_APK = Join-Path $S 'installed.apk'
+            Set-Content -LiteralPath (Join-Path $S 'installed') -Value '1'
+            Write-Output 'Success'
+            exit 0
+        }
         'reboot' { exit 0 }
         'shell' { break }
         default { exit 0 }
@@ -99,16 +115,48 @@ if ($sub -eq '-s') {
     if ($cmd -match 'getprop ro\.build\.fingerprint') { Write-Output $fp; exit 0 }
     if ($cmd -match 'getprop vendor\.destination') { Write-Output $dest; exit 0 }
     if ($cmd -match 'getprop vendor\.safe_volume\.enabled') { Write-Output $safe; exit 0 }
-    if ($cmd -match 'pm path') { Write-Output 'package:/data/app/x/base.apk'; exit 0 }
+    if ($cmd -match 'pm path') {
+        if ($env:FAKE_APP_MISSING -eq '1' -and -not (Test-Path (Join-Path $S 'installed'))) { exit 0 }
+        Write-Output 'package:/data/app/x/base.apk'; exit 0
+    }
     if ($cmd -match 'dumpsys package') { Write-Output "    versionName=$ver"; exit 0 }
     if ($cmd -match '^test -r') { exit 0 }
+    if ($cmd -match '^mkdir /data/local/tmp/nvptool\.lock$') {
+        $lock = Join-Path $S 'remote-lock'
+        if (Test-Path $lock) { exit 1 }
+        New-Item -ItemType Directory -Path $lock | Out-Null
+        exit 0
+    }
+    if ($cmd -match '^printf .* > /data/local/tmp/nvptool\.lock/owner$') {
+        if ($cmd -match "^printf '%s' '([^']+)' >") {
+            Set-Content -LiteralPath (Join-Path $S 'remote-lock/owner') -Value $Matches[1] -NoNewline
+            exit 0
+        }
+        exit 1
+    }
+    if ($cmd -eq 'cat /data/local/tmp/nvptool.lock/owner') {
+        $p = Join-Path $S 'remote-lock/owner'
+        if (-not (Test-Path $p)) { exit 1 }
+        Get-Content -LiteralPath $p
+        exit 0
+    }
+    if ($cmd -eq 'rm -f /data/local/tmp/nvptool.lock/owner && rmdir /data/local/tmp/nvptool.lock') {
+        Remove-Item -LiteralPath (Join-Path $S 'remote-lock') -Recurse -Force
+        exit 0
+    }
     if ($cmd -match 'logcat -d') {
         $l = Join-Path $S 'logcat'
         if (Test-Path $l) { Get-Content -LiteralPath $l }
         exit 0
     }
     if ($cmd -match 'settings get global hidden_api_blacklist_exemptions') {
+        if ($env:FAKE_SETTINGS_GET_FAIL -eq '1') { exit 1 }
         Write-Output (Get-Setting); exit 0
+    }
+    if ($cmd -eq 'settings list global') {
+        if ($env:FAKE_SETTINGS_LIST_FAIL -eq '1') { exit 1 }
+        if (Test-Path (Join-Path $S 'setting')) { Write-Output "hidden_api_blacklist_exemptions=$(Get-Setting)" }
+        exit 0
     }
     if ($cmd -match 'settings put global hidden_api_blacklist_exemptions') {
         if ($cmd -match '\$\(cat') {
@@ -127,6 +175,7 @@ if ($sub -eq '-s') {
         exit 0
     }
     if ($cmd -match 'am start') {
+        if ($env:FAKE_START_FAIL -eq '1') { exit 1 }
         $p = Join-Path $S 'pending'
         if ((Test-Path $p) -and (Test-Path (Join-Path $S 'armed'))) {
             Add-Content -LiteralPath (Join-Path $S 'logcat') -Value (Get-Content -LiteralPath $p)
@@ -134,6 +183,7 @@ if ($sub -eq '-s') {
         }
         exit 0
     }
+    if ($cmd -match '^rm -f /data/local/tmp/nvptool-') { exit 0 }
     exit 0
 }
 exit 0

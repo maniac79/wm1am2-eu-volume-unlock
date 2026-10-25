@@ -8,10 +8,10 @@
 cd "$(dirname "$0")" || exit 1
 
 # keep the helper scripts executable after unzipping
-chmod +x ./menu.sh ./inject.sh 2>/dev/null
+chmod +x ./menu.sh ./nvptool.sh 2>/dev/null
 
 # remove the quarantine flag if it is present, so the menu runs without prompts
-xattr -d com.apple.quarantine ./menu.sh ./inject.sh 2>/dev/null
+xattr -d com.apple.quarantine ./menu.sh ./nvptool.sh 2>/dev/null
 
 ./menu.sh
 rc=$?

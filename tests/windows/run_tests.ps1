@@ -11,7 +11,14 @@ param(
 $ErrorActionPreference = 'Continue'
 $Here = $PSScriptRoot
 $Root = Split-Path (Split-Path $Here -Parent) -Parent
-$NV   = Join-Path $Root 'tools/nvptool.ps1'
+$FixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("npt-bundle-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $FixtureRoot | Out-Null
+Copy-Item -LiteralPath (Join-Path $Root 'tools/nvptool.ps1') -Destination (Join-Path $FixtureRoot 'nvptool.ps1')
+$FakeApk = Join-Path $FixtureRoot 'nvptool.apk'
+[System.IO.File]::WriteAllText($FakeApk, 'offline fake apk bytes for hash binding')
+$FakeHash = (Get-FileHash -LiteralPath $FakeApk -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -LiteralPath (Join-Path $FixtureRoot 'SOURCE-COMMIT.txt') -Value "apk_sha256=$FakeHash"
+$NV   = Join-Path $FixtureRoot 'nvptool.ps1'
 $INJ  = Join-Path $Root 'tools/inject.ps1'
 $Fake = Join-Path $Root 'tests/host/fakebin-ps/fake-adb.ps1'
 
@@ -67,9 +74,13 @@ function New-Env {
     $env:NVPTOOL_BACKUP_DIR = Join-Path $t 'backups'
     New-Item -ItemType Directory -Force -Path $env:FAKE_STATE_DIR | Out-Null
     $env:NVPTOOL_ADB = $Fake
+    $env:FAKE_BUNDLED_APK = $FakeApk
     foreach ($v in @('FAKE_MODEL', 'FAKE_FP', 'FAKE_PKGVER', 'FAKE_DEVICES', 'FAKE_PROFILE',
                      'FAKE_RESPONSE', 'FAKE_RESPONSE_READ', 'FAKE_RESPONSE_WRITE',
-                     'FAKE_SETTINGS_RESTORE_FAIL', 'NVPTOOL_SERIAL',
+                     'FAKE_SETTINGS_RESTORE_FAIL', 'FAKE_SETTINGS_GET_FAIL',
+                     'FAKE_SETTINGS_LIST_FAIL', 'FAKE_START_FAIL', 'FAKE_APP_MISSING',
+                     'FAKE_INSTALLED_APK', 'FAKE_PULL_FAIL', 'FAKE_INSTALL_FAIL',
+                     'NVPTOOL_SERIAL',
                      'NVPTOOL_ALLOW_NON_BASELINE_RESTORE')) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
     }
@@ -106,6 +117,7 @@ Check 'stale app version aborts' ((Run-Nv @('apply')).Rc -ne 0)
 Write-Host '== read + backup =='
 [void](New-Env)
 $r = Run-Nv @('read')
+if ($r.Rc -ne 0) { Write-Host "read diagnostic: $($r.Out)" }
 Check 'read rc 0' ($r.Rc -eq 0)
 $base = Join-Path (Get-BackupDir) 'baseline.conf'
 Check 'baseline created' (Test-Path $base)
@@ -122,6 +134,10 @@ $r = Run-Nv @('apply')
 Check 'apply rc 0' ($r.Rc -eq 0)
 Check 'apply reports verified' ($r.Out -match 'verified')
 Check 'apply created a backup' (Test-Path (Join-Path (Get-BackupDir) 'baseline.conf'))
+$calls = Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'calls.log') -Raw
+$payloads = @([regex]::Matches($calls, '(?m)^-s SER123 push .* (/data/local/tmp/nvptool-[A-Za-z0-9_-]+\.txt)$') |
+    ForEach-Object { $_.Groups[1].Value })
+Check 'apply phases use different remote payload paths' ($payloads.Count -eq 2 -and $payloads[0] -ne $payloads[1])
 
 Write-Host '== already-modified device is not labelled factory =='
 [void](New-Env); $env:FAKE_PROFILE = 'target'
@@ -195,6 +211,64 @@ $rc = $LASTEXITCODE
 Check 'inject.ps1 refuses Apply' ($rc -eq 3)
 Check 'refusal names the safe route' (($out -join ' ') -match 'nvptool.ps1')
 
+Write-Host '== failed setting capture and existing custom setting =='
+[void](New-Env); $env:FAKE_SETTINGS_GET_FAIL = '1'
+$r = Run-Nv @('read')
+Check 'failed settings get aborts before mutation' ($r.Rc -ne 0)
+$calls = Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'calls.log') -Raw
+Check 'failed settings get never pushes or puts' (-not ($calls -match '(?m)^-s SER123 push|settings put'))
+[void](New-Env); [System.IO.File]::WriteAllText((Join-Path $env:FAKE_STATE_DIR 'setting'), '  custom-value  ')
+$r = Run-Nv @('read')
+Check 'custom setting clean refusal rc 12' ($r.Rc -eq 12)
+Check 'custom setting preserved byte for byte' ([System.IO.File]::ReadAllText((Join-Path $env:FAKE_STATE_DIR 'setting')) -ceq '  custom-value  ')
+$calls = Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'calls.log') -Raw
+Check 'custom setting never overwritten' (-not ($calls -match 'settings put'))
+
+Write-Host '== installed APK identity and explicit fresh install =='
+[void](New-Env)
+$forged = Join-Path $env:FAKE_STATE_DIR 'forged.apk'
+[System.IO.File]::WriteAllText($forged, 'foreign APK reporting the same 0.2.3 version')
+$env:FAKE_INSTALLED_APK = $forged
+$r = Run-Nv @('read')
+Check 'same-version foreign APK refused' ($r.Rc -ne 0 -and $r.Out -match 'bytes differ')
+$calls = Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'calls.log') -Raw
+Check 'foreign APK never reaches payload push' (-not ($calls -match '(?m)^-s SER123 push'))
+
+[void](New-Env); $env:FAKE_APP_MISSING = '1'
+$r = Run-Nv @('read')
+Check 'missing helper read refuses without install' ($r.Rc -ne 0 -and $r.Out -match 'menu option 7')
+$calls = Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'calls.log') -Raw
+Check 'read never auto-installs' (-not ($calls -match '(?m)^-s SER123 install'))
+$r = Run-Nv @('install')
+Check 'explicit helper install succeeds' ($r.Rc -eq 0 -and $r.Out -match 'bytes verified')
+$calls = Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'calls.log') -Raw
+Check 'installer uses same-certificate upgrade' ($calls -match '(?m)^-s SER123 install -r ')
+Check 'read after explicit install succeeds' ((Run-Nv @('read')).Rc -eq 0)
+
+Write-Host '== exception path and cleanup priority =='
+[void](New-Env); $env:FAKE_START_FAIL = '1'
+$r = Run-Nv @('read')
+Check 'launch failure returns operation error' ($r.Rc -eq 4)
+Check 'launch failure restores absent setting' (-not (Test-Path (Join-Path $env:FAKE_STATE_DIR 'setting')))
+Check 'launch failure releases remote lock' (-not (Test-Path (Join-Path $env:FAKE_STATE_DIR 'remote-lock')))
+[void](New-Env); $env:FAKE_RESPONSE_READ = 'fatal'; $env:FAKE_SETTINGS_RESTORE_FAIL = '1'
+$r = Run-Nv @('read')
+Check 'cleanup failure overrides fatal read with rc 7' ($r.Rc -eq 7)
+Check 'fatal and recovery errors both visible' ($r.Out -match 'read FATAL' -and $r.Out -match 'recovery-required')
+Check 'cleanup failure retains remote lock' (Test-Path (Join-Path $env:FAKE_STATE_DIR 'remote-lock'))
+$calls = Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'calls.log') -Raw
+Check 'failed cleanup is attempted only once' (([regex]::Matches($calls, 'settings delete global hidden_api_blacklist_exemptions')).Count -eq 1)
+$records = @(Get-ChildItem -LiteralPath (Get-BackupDir) -Filter 'recovery-*.txt' -ErrorAction SilentlyContinue)
+Check 'cleanup failure retains persistent record' ($records.Count -eq 1)
+
+Write-Host '== device-wide lock blocks concurrent host =='
+[void](New-Env)
+New-Item -ItemType Directory -Path (Join-Path $env:FAKE_STATE_DIR 'remote-lock') | Out-Null
+Set-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'remote-lock/owner') -Value 'other-host' -NoNewline
+$r = Run-Nv @('read')
+Check 'existing remote lock refuses second host' ($r.Rc -ne 0 -and $r.Out -match 'device lock')
+Check 'second host leaves first lock intact' ((Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'remote-lock/owner') -Raw) -eq 'other-host')
+
 Write-Host '== launcher -> menu -> orchestrator =='
 $isWindowsOs = if (Test-Path Variable:\IsWindows) { $IsWindows } else { ($env:OS -eq 'Windows_NT') }
 $pkg = Join-Path ([System.IO.Path]::GetTempPath()) ('nvp launch ' + [guid]::NewGuid().ToString('N').Substring(0, 8) + ' ünïcode')
@@ -211,8 +285,19 @@ $layout = @{
 foreach ($f in $layout.Keys) {
     Copy-Item -LiteralPath (Join-Path $Root $layout[$f]) -Destination (Join-Path $pkg $f) -Force
 }
+Copy-Item -LiteralPath $FakeApk -Destination (Join-Path $pkg 'nvptool.apk')
+Copy-Item -LiteralPath (Join-Path $FixtureRoot 'SOURCE-COMMIT.txt') -Destination (Join-Path $pkg 'SOURCE-COMMIT.txt')
 $menu = Join-Path $pkg 'menu.ps1'
 $packedBackups = Join-Path $pkg 'backups'
+
+[void](New-Env)
+$env:NVPTOOL_ADB = $Fake
+$env:NVPTOOL_BACKUP_DIR = $packedBackups
+$env:FAKE_APP_MISSING = '1'
+$out = ((@('1', '', '7', 'yes', '', '2', '', '0') | & $PS -NoProfile -ExecutionPolicy Bypass -File $menu) 2>&1 | Out-String)
+Check 'fresh menu status then explicit install then read' ($out -match 'device\s+: NW-WM1AM2' -and $out -match 'helper installed' -and $out -match 'read OK')
+$calls = Get-Content -LiteralPath (Join-Path $env:FAKE_STATE_DIR 'calls.log') -Raw
+Check 'fresh menu makes exactly one explicit install' (([regex]::Matches($calls, '(?m)^-s SER123 install -r ')).Count -eq 1)
 
 [void](New-Env)
 $env:NVPTOOL_ADB = $Fake
@@ -269,6 +354,7 @@ Remove-Item -LiteralPath $pkg -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ''
 Write-Host "PASS=$($script:Pass) FAIL=$($script:Fail)"
+Remove-Item -LiteralPath $FixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 if ($script:Fail -ne 0) {
     $script:Failed | ForEach-Object { Write-Host "  - $_" }
     exit 1

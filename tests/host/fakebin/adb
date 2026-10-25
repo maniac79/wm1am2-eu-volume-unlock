@@ -14,12 +14,16 @@ DEVICES="${FAKE_DEVICES:-SER123}"
 MODEL="${FAKE_MODEL:-NW-WM1AM2}"
 FP="${FAKE_FP:-SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys}"
 RESP="${FAKE_RESPONSE:-ok}"
-PKGVER="${FAKE_PKGVER:-0.2.2}"
+PKGVER="${FAKE_PKGVER:-0.2.3}"
 DEST="${FAKE_DEST:-03010000}"
 SAFE="${FAKE_SAFE:-01000000}"
 
 get_setting() {
     if [ -f "$S/setting" ]; then cat "$S/setting"; else echo "null"; fi
+}
+
+has_installed() {
+    [ -f "$S/installed" ] || [ "${FAKE_INSTALLED:-1}" != 0 ]
 }
 
 pad_hex() {   # ascii -> fixed 256-byte hex
@@ -66,13 +70,13 @@ emit_results() {
         RESP="${FAKE_RESPONSE_WRITE:-$RESP}"
     fi
 
-    local head="NVPTOOL_RESULT v=1 schema=1 tool=0.2.2 run=$run op=$id"
+    local head="NVPTOOL_RESULT v=1 schema=1 tool=0.2.3 run=$run op=$id"
     begin="$head ev=begin"
     case "$RESP" in
         noout) return 0 ;;
         truncated) printf '%s\n' "$begin" ; return 0 ;;
         stale)  printf '%s\n' "$begin"
-                printf 'NVPTOOL_RESULT v=1 schema=1 tool=0.2.2 run=STALE-999 op=%s ev=summary status=OK phase=done written=8 verified=8 total=8 reason=-\n' "$id"
+                printf 'NVPTOOL_RESULT v=1 schema=1 tool=0.2.3 run=STALE-999 op=%s ev=summary status=OK phase=done written=8 verified=8 total=8 reason=-\n' "$id"
                 return 0 ;;
         malformed) printf '%s\n' "$begin"
                 printf '%s ev=summary status=BOGUS phase=done written=8 verified=8 total=8 reason=-\n' "$head"
@@ -128,11 +132,29 @@ handle_shell() {
         *"getprop ro.build.fingerprint"*)    echo "$FP" ;;
         *"getprop vendor.destination"*)      echo "$DEST" ;;
         *"getprop vendor.safe_volume.enabled"*) echo "$SAFE" ;;
-        *"pm path "*)                        echo "package:/data/app/x/base.apk" ;;
+        *"pm path "*)                        has_installed && echo "package:/data/app/x/base.apk" ;;
         *"dumpsys package "*)                echo "    versionName=$PKGVER" ;;
         *"test -r "*)                        exit 0 ;;
+        *"mkdir /data/local/tmp/nvptool.lock"*)
+            [ -f "$S/remote_lock" ] && exit 1
+            : > "$S/remote_lock" ;;
+        *" > /data/local/tmp/nvptool.lock/owner"*)
+            if [[ "$line" =~ \'([0-9-]+)\' ]]; then
+                printf '%s' "${BASH_REMATCH[1]}" > "$S/remote_owner"
+            else
+                exit 1
+            fi ;;
+        *"cat /data/local/tmp/nvptool.lock/owner"*)
+            [ -f "$S/remote_owner" ] && cat "$S/remote_owner" || exit 1 ;;
+        *"rmdir /data/local/tmp/nvptool.lock"*)
+            rm -f "$S/remote_owner" "$S/remote_lock" ;;
         *"logcat -d"*)                       [ -f "$S/logcat" ] && cat "$S/logcat" ;;
-        *"settings get global hidden_api_blacklist_exemptions"*) get_setting ;;
+        *"settings list global"*)
+            [ "${FAKE_SETTINGS_LIST_FAIL:-0}" = 1 ] && exit 1
+            [ -f "$S/setting" ] && printf 'hidden_api_blacklist_exemptions=%s\n' "$(cat "$S/setting")" ;;
+        *"settings get global hidden_api_blacklist_exemptions"*)
+            [ "${FAKE_SETTINGS_GET_FAIL:-0}" = 1 ] && exit 1
+            get_setting ;;
         *"settings put global hidden_api_blacklist_exemptions"*)
             case "$line" in
                 *'$(cat'*)   # payload install: mutates the setting
@@ -172,6 +194,19 @@ if [ "$sub" = "-s" ]; then
     serial="$1"; shift || true
     printf '%s' "$serial" > "$S/last_serial"
     sub="$1"; shift || true
+    if [ "$sub" = "install" ]; then
+        cp "${@: -1}" "$S/installed.apk" || exit 1
+        : > "$S/installed"
+        echo 'Success'
+        exit 0
+    fi
+    if [ "$sub" = "pull" ]; then
+        src="$1"; dst="$2"
+        [ "$src" = /data/app/x/base.apk ] || exit 1
+        cp "${FAKE_INSTALLED_APK:-${S}/installed.apk}" "$dst" 2>/dev/null || \
+            cp "${NVPTOOL_APK:-}" "$dst" 2>/dev/null || exit 1
+        exit 0
+    fi
     if [ "$sub" = "push" ]; then
         cp "$1" "$S/payload.txt" 2>/dev/null || true
         emit_results "$S/payload.txt" > "$S/pending"

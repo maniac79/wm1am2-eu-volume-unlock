@@ -92,6 +92,26 @@ No claim is made here about battery life, third-party applications, or any other
 behaviour; nothing of that kind was measured.
 
 
+## Tool boundary in the current 0.2.3 source
+
+The host checks the exact supported model/build before privileged work. It
+compares the installed helper APK bytes, pulled from the device, with the
+bundled APK hash, and requires both successful `settings list` and `settings
+get` queries to establish that `hidden_api_blacklist_exemptions` is absent.
+Any present value is refused without modification, including an empty or
+literal `null` value. A global setting query error also stops before mutation.
+The temporary setting, payload file and device-wide lock require verified
+cleanup. If cleanup cannot be confirmed, the host reports a recovery state
+and retains a protected local record and device lock for inspection; it does
+not blindly retry or delete an unknown pre-existing setting.
+
+These are source-level controls, not an independent test of the Sony device.
+The original manual method reached the vendor HAL on the author's unit; the
+finished 0.2.3 wrappers have not yet been run end-to-end on physical hardware.
+An eight-field NVRAM operation is not atomic, and the normal restore code
+intentionally rejects certain unexpected current values. No claim is made
+that every damaged state can be recovered by this tool.
+
 ## What was not tested
 
 To keep this honest: no attempt was made to write identity fields, no attempt

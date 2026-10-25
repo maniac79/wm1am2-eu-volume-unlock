@@ -1,12 +1,6 @@
-# inject.ps1 - start one nvptool class in a platform_app context (Windows).
-#
-# Strict by design:
-#   - binds to exactly one authorised device (or -Serial);
-#   - does not clear logcat;
-#   - preserves the previous hidden_api_blacklist_exemptions value;
-#   - exits non-zero unless a complete summary record for this run id is seen.
-#
-# It is a runner only. Backup/journal orchestration lives in the bash tool.
+# Compatibility entry point. The historical arbitrary-class runner bypassed the
+# orchestrator's APK identity, device lock, backup and setting recovery checks.
+# Keep only the named read operation and route it through nvptool.ps1.
 param(
     [Parameter(Mandatory = $true)][string]$ClassName,
     [Parameter(Mandatory = $true)][string]$RunId,
@@ -17,96 +11,15 @@ param(
     [string]$Hal = '/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk',
     [int]$WaitSeconds = 20
 )
-
-$ErrorActionPreference = 'Stop'
-
-# This runner is intentionally NOT a write path. Write-capable classes are
-# refused unconditionally: they require a verified backup, a state digest and
-# operation reporting, which only nvptool.ps1 provides. There is deliberately
-# no override switch, so a normal user cannot reach an unprotected NVRAM write.
-$writeClasses = @(
-    'org.maniac79.nvptool.Apply',
-    'org.maniac79.nvptool.RestoreField',
-    'org.maniac79.nvptool.RestoreReference'
-)
-if ($writeClasses -contains $ClassName) {
-    # [Console]::Error + exit, not Write-Error: with $ErrorActionPreference='Stop'
-    # a Write-Error would terminate before the intended exit code is reached.
-    [Console]::Error.WriteLine(
-        "refusing to run write-capable class '$ClassName': writes require a verified " +
-        'backup and digest. Use nvptool.ps1 apply / nvptool.ps1 restore instead.')
+if ($ClassName -ne 'org.maniac79.nvptool.Read' -or
+    $Package -ne 'org.maniac79.nvptool' -or $RunUid -ne 1000 -or
+    $Seinfo -ne 'platform:targetSdkVersion=29:complete' -or
+    $Hal -ne '/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk' -or
+    $WaitSeconds -ne 20 -or $RunId -notmatch '^[A-Za-z0-9_-]+$') {
+    [Console]::Error.WriteLine('refusing standalone class invocation; use nvptool.ps1 read, apply or restore')
     exit 3
 }
-$Tag = 'NVPTOOL'
-$Remote = '/data/local/tmp/nvptool_payload.txt'
-
-$tempDir = if ($env:TEMP) { $env:TEMP } elseif ($env:TMPDIR) { $env:TMPDIR }
-           else { [System.IO.Path]::GetTempPath() }
-$Local = Join-Path $tempDir ("nvptool_payload_{0}.txt" -f $RunId)
-
-# ---- device selection ------------------------------------------------------
-$state = (& adb get-state 2>$null | Out-String).Trim()
-if ($state -ne 'device') { Write-Error "adb device not ready (state='$state')"; exit 1 }
-
-if ([string]::IsNullOrEmpty($Serial)) {
-    $list = @(& adb devices | Select-Object -Skip 1 | Where-Object { $_ -match "`tdevice$" } |
-              ForEach-Object { ($_ -split "`t")[0] } | Where-Object { $_ })
-    if ($list.Count -eq 0) { Write-Error 'no authorised adb device'; exit 1 }
-    if ($list.Count -gt 1) { Write-Error "more than one adb device attached ($($list -join ', ')); pass -Serial"; exit 1 }
-    $Serial = $list[0]
-}
-function A { & adb -s $Serial @args }
-
-$model = (& adb -s $Serial shell getprop ro.product.model | Out-String).Trim()
-Write-Host "device: $model ($Serial)"
-
-$rawApk = & adb -s $Serial shell "pm path $Package" 2>$null
-$apkPath = @(($rawApk -split "`n") | ForEach-Object { $_.Trim() } |
-             Where-Object { $_ -like 'package:*' } | ForEach-Object { $_.Substring(8) }) |
-           Select-Object -First 1
-if (-not $apkPath) { Write-Error "package $Package not installed"; exit 1 }
-
-# ---- payload ---------------------------------------------------------------
-$cmdLine = 'CLASSPATH=' + $apkPath + ':' + $Hal + ' /system/bin/app_process /system/bin ' + $ClassName + ' ' + $RunId + ' #'
-$zygoteArgs = @(
-    "--setuid=$RunUid", "--setgid=$RunUid", '--setgroups=3003', '--runtime-args',
-    "--seinfo=$Seinfo", '--runtime-flags=1', '--nice-name=nvptool', '--invoke-with', $cmdLine
-)
-$payload = "LClass1;->method1(`n" + $zygoteArgs.Count + "`n" + ($zygoteArgs -join "`n")
-[System.IO.File]::WriteAllText($Local, $payload, (New-Object System.Text.UTF8Encoding($false)))
-
-# ---- previous setting state ------------------------------------------------
-$before = (& adb -s $Serial shell 'settings get global hidden_api_blacklist_exemptions' | Out-String).Trim()
-$touched = $false
-
-try {
-    & adb -s $Serial push $Local $Remote *> $null
-    $touched = $true
-    & adb -s $Serial shell "settings put global hidden_api_blacklist_exemptions `"`$(cat $Remote)`"" *> $null
-    & adb -s $Serial shell 'am force-stop com.android.settings' *> $null
-    & adb -s $Serial shell 'am start -a android.settings.SETTINGS' *> $null
-
-    $lines = @()
-    for ($i = 0; $i -lt $WaitSeconds; $i++) {
-        Start-Sleep -Seconds 1
-        $lines = @(& adb -s $Serial shell "logcat -d -s $Tag`:V" 2>$null | Where-Object { $_ -match [regex]::Escape("run=$RunId ") })
-        if ($lines | Where-Object { $_ -match 'ev=summary' }) { break }
-    }
-    $lines | ForEach-Object { Write-Host $_ }
-
-    $summaries = @($lines | Where-Object { $_ -match 'ev=summary' })
-    if ($summaries.Count -ne 1) { Write-Error "no single summary record (got $($summaries.Count)) - outcome unknown"; exit 4 }
-    if ($summaries[0] -notmatch 'status=OK') { Write-Error 'operation did not report OK'; exit 5 }
-    exit 0
-}
-finally {
-    & adb -s $Serial shell "rm -f $Remote" *> $null
-    if ($touched) {
-        if ($before -eq 'null') {
-            & adb -s $Serial shell 'settings delete global hidden_api_blacklist_exemptions' *> $null
-        } else {
-            & adb -s $Serial shell "settings put global hidden_api_blacklist_exemptions `"$before`"" *> $null
-        }
-    }
-    Remove-Item -Force -ErrorAction SilentlyContinue $Local
-}
+if ($Serial) { $env:NVPTOOL_SERIAL = $Serial }
+$hostExe = (Get-Process -Id $PID).Path
+& $hostExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'nvptool.ps1') 'read'
+exit $LASTEXITCODE

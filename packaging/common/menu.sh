@@ -73,6 +73,7 @@ while true; do
     echo "  4) Restore from backup  per-field restore, verified"
     echo "  5) Reboot the player"
     echo "  6) Requirements / where is adb"
+    echo "  7) Install/update bundled helper APK (no NVRAM write)"
     echo "  0) Exit"
     echo
     echo "  Advanced:  'restore-ref' restores the built-in reference profile,"
@@ -110,6 +111,17 @@ while true; do
             ;;
         5) "$NV" reboot; pause ;;
         6) adb_help ;;
+        7)
+            hr
+            echo "  Installs the APK supplied with this package on the selected player."
+            echo "  An existing installation with a different signing key will fail;"
+            echo "  this tool will not uninstall it automatically."
+            hr
+            if confirm_yes "Install bundled helper?"; then
+                run_action "Installing bundled helper" install
+                pause
+            fi
+            ;;
         restore-ref)
             hr
             echo "  ADVANCED: writes the reference profile recorded from one unit."

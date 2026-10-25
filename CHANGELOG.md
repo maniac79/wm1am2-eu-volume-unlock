@@ -1,15 +1,59 @@
 # Changelog
 
-Versioning: this is an **experimental** project. Anything with a `0.x` version is
-a pre-release, is not hardware-validated, and may change or be withdrawn.
+Versioning: this is an **experimental** project. A `0.x` version can change
+or be withdrawn. A successful original manual method is not hardware
+validation of later packaged implementations.
 
-Only one release is downloadable at a time. Historical Git tags are kept for
-traceability, but their prebuilt binaries are withdrawn if they contain known
-safety defects.
+`v0.2.2` remains available as an older experimental pre-release with known
+issues. Older 0.1.0, 0.2.0 and 0.2.1 binaries were withdrawn; their Git tags
+remain for traceability. An entry here is not evidence that a build passed CI,
+that an asset was published or that physical hardware was tested.
 
 ---
 
-## 0.2.2 — current, experimental pre-release
+## 0.2.3 — experimental release
+
+`versionName=0.2.3`, `versionCode=6`; the intended official APK retains the
+0.2.2 dedicated release signing certificate. No automatic app uninstall and
+no change to the eight target/reference NVRAM values or backup schema 1.
+
+- The packaged first-user path now finds adjacent `platform-tools`; menu option
+  7 and host CLI `install` explicitly install/update the bundled APK and verify
+  installed APK bytes. `status` does not install an app; `read` and `apply` stop
+  with an install hint when it is missing.
+- Before privileged work, the host verifies the installed APK against the
+  package's APK hash, checks both `settings list` and `settings get`, and
+  refuses any already-present or unverifiably absent
+  `hidden_api_blacklist_exemptions` key. It does not change someone else's
+  pre-existing value to make the command run.
+- A per-run payload path, local lock and atomic device-wide lock coordinate
+  privileged phases. Interrupted/failed cleanup is reported separately,
+  keeps a protected recovery record and lock when unresolved, and is never
+  silently retried. Unknown data outcomes stay unknown. A lock or setting
+  requiring manual recovery must be inspected; no generic delete command is
+  supplied.
+- Build receipts bind source/build inputs and APK metadata to packaging;
+  official packaging rejects a dirty tree, stale receipt or test key by
+  default. CI now exercises package entry points with simulated ADB before
+  any later publication decision. `release`, `local` and `ci` signing modes
+  are explicit; password material is not put literally in process arguments.
+- Documentation distinguishes original manual success, simulated host tests
+  and still-unperformed hardware acceptance. It corrects the status property,
+  baseline terminology, first-user download/install path, recovery limits and
+  firmware-update guidance.
+
+**Still open:** the finished 0.2.3 macOS, Windows and Linux tools have not
+been tested on a physical Walkman. Automatic backup, restore, real USB/HAL
+behavior, partial-write recovery and measured loudness remain unverified on
+hardware. `baseline` is a reference-value match, not independent proof of
+historical original values for a specific unit. Ordinary restore deliberately
+rejects certain damaged current field values even with a valid backup. A
+manual return to a previous device state and a first macOS package test are
+future, separately reviewed device actions, not results of this source change.
+
+---
+
+## 0.2.2 — older published experimental pre-release with known issues
 
 Source commit: the `v0.2.2` tag. Functionally identical to 0.2.1 — this release
 exists for **one** reason: the signing key.

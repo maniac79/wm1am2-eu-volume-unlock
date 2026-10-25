@@ -4,7 +4,7 @@
 #     ./START-linux.sh
 cd "$(dirname "$0")" || exit 1
 
-chmod +x ./menu.sh ./inject.sh 2>/dev/null
+chmod +x ./menu.sh ./nvptool.sh 2>/dev/null
 
 ./menu.sh
 rc=$?

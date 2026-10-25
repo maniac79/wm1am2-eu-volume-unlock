@@ -1,6 +1,7 @@
 # Findings
 
-Everything below was established on one EU **NW-WM1AM2**, Android 11,
+The original manual method below was reported successful on one EU
+**NW-WM1AM2**, Android 11,
 build fingerprint `SonyAudio/icx1298_001/icx1298:11/1.09.00/68:user/release-keys`,
 kernel `5.4.233`, platform `imx` (NXP i.MX), audio codec board `icx1298`.
 
@@ -173,8 +174,10 @@ Recorded so nobody repeats them:
 * Bootloader route: `ro.oem_unlock_supported=1` but `fastboot flashing
   get_unlock_ability` returned `0` and `secure:yes`, so a patched boot image
   was not a realistic path. Firmware `.UPG` is encrypted and Sony-signed.
-* Sony's `scsitool`/`SonyNWDestTool` destination tool does not support Android
-  Walkmans at all (confirmed by TheWalkmanBlog and tellementnomade).
+* The older-Walkman destination workflow described by
+  [Tellementnomade](https://forum.tellementnomade.org/viewtopic.php?t=15978)
+  is not a validated method for this Android M2 profile. This project did not
+  use that tool for its observed write path.
 
 ---
 
@@ -191,9 +194,12 @@ The DAC's log output (`dacdat`) is not captured in logcat, so the loaded table
 cannot be confirmed by log. The property above is the input that boot script
 receives, which is why it is the check we rely on.
 
-`Apply` is idempotent — re-running it on an already-modified device rewrites the
-same values and reports all eight as verified — so it can be used to confirm
-that the configuration is still intact.
+The target field values can be written again when the current state satisfies
+the payload guards. Do not use a repeat `Apply` as a harmless confirmation:
+`Apply` attempts persistent NVRAM writes and cleanup of a temporary global
+setting. Use `status` for a property-only check and a separately assessed
+privileged `read` for all eight values. The packaged 0.2.3 implementation
+remains untested on physical hardware.
 
 **Magnitude: not established.** The two shipped output tables differ in 3202 of
 15738 bytes. That is a byte-diff, not an attenuation measurement: converting it
@@ -203,8 +209,9 @@ electrical or acoustic measurement has been made. The honest statement is
 range", not "3.2 dB louder". Earlier revisions of this document quoted ~3.2 dB;
 that figure was an unsupported inference and has been removed.
 
-**What is observed vs. what is interpreted.** Observed: eight field values are
-written and read back equal (verified on the tested unit). Interpreted: that the
+**What is observed vs. what is interpreted.** For the original manual run,
+the author reports that eight field values were written and read back equal
+on the tested unit. This is not a hardware result for the packaged 0.2.3 tool. Interpreted: that the
 boot script then loads the non-CEU table, because `vendor.safe_volume.enabled`
 reads `00000000`. Not established: the minimum field set required, whether the
 High Gain switch becomes audible, and the size of any loudness change.

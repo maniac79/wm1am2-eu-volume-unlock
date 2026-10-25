@@ -4,7 +4,7 @@
 #
 # Source this file; do not execute it.
 
-NL_TOOL_VERSION="0.2.2"
+NL_TOOL_VERSION="0.2.3"
 NL_TAG="NVPTOOL"
 NL_PKG="org.maniac79.nvptool"
 NL_HAL="/system_ext/priv-app/IzmAudioManager/IzmAudioManager.apk"
@@ -40,12 +40,25 @@ nl_cleanup_local() {
 # ------------------------------------------------------------- device binding
 nl_serial() { printf '%s' "${NL_SERIAL:-}"; }
 
-nl_adb() { adb -s "$NL_SERIAL" "$@"; }
+nl_find_adb() {
+    if [ -n "${NL_ADB:-}" ]; then return 0; fi
+    if [ -n "${NVPTOOL_ADB:-}" ]; then
+        case "$NVPTOOL_ADB" in /*) ;; *) nl_die "NVPTOOL_ADB must be an absolute path" ;; esac
+        [ -x "$NVPTOOL_ADB" ] || nl_die "NVPTOOL_ADB is not executable"
+        NL_ADB="$NVPTOOL_ADB"
+    elif [ -x "$HERE/platform-tools/adb" ]; then
+        NL_ADB="$HERE/platform-tools/adb"
+    else
+        NL_ADB=$(command -v adb 2>/dev/null) || nl_die "adb not found (put platform-tools next to this tool or add adb to PATH)"
+    fi
+}
+
+nl_adb() { "$NL_ADB" -s "$NL_SERIAL" "$@"; }
 
 nl_select_device() {
-    command -v adb >/dev/null 2>&1 || nl_die "adb not found in PATH"
+    nl_find_adb
     local list n
-    list=$(adb devices | awk 'NR>1 && $2=="device" {print $1}')
+    list=$("$NL_ADB" devices | awk 'NR>1 && $2=="device" {print $1}') || nl_die "adb devices failed"
     n=$(printf '%s\n' "$list" | grep -c . || true)
     if [ "$n" -eq 0 ]; then
         nl_die "no authorised adb device (enable USB debugging and accept the prompt)"
@@ -63,7 +76,7 @@ nl_select_device() {
 nl_bind_serial() {
     [ -n "${NL_SERIAL:-}" ] || nl_die "internal: device not selected"
     local now
-    now=$(adb devices | awk 'NR>1 && $2=="device" {print $1}')
+    now=$("$NL_ADB" devices | awk 'NR>1 && $2=="device" {print $1}') || nl_die "adb devices failed"
     case " $(printf '%s' "$now" | tr '\n' ' ') " in
         *" $NL_SERIAL "*) ;;
         *) nl_die "device $NL_SERIAL disappeared during the operation" ;;
@@ -71,6 +84,7 @@ nl_bind_serial() {
 }
 
 # ----------------------------------------------------------------------- lock
+NL_LOCAL_LOCK_HELD=0
 nl_lock_acquire() {
     NL_LOCK_DIR="${TMPDIR:-/tmp}/nvptool.lock.${NL_SERIAL}"
     if ! mkdir "$NL_LOCK_DIR" 2>/dev/null; then
@@ -79,15 +93,50 @@ nl_lock_acquire() {
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             nl_die "another nvptool run is active for this device (pid $pid)"
         fi
-        rm -rf "$NL_LOCK_DIR"
-        mkdir "$NL_LOCK_DIR" 2>/dev/null || nl_die "cannot create lock"
+        nl_die "an old local lock exists at $NL_LOCK_DIR (pid ${pid:-unknown}); inspect and remove it manually if safe" 12
     fi
-    printf '%s' "$$" > "$NL_LOCK_DIR/pid"
+    NL_LOCAL_LOCK_HELD=1
+    printf '%s' "$$" > "$NL_LOCK_DIR/pid" || nl_die "cannot record local lock owner"
 }
 
 nl_lock_release() {
-    [ -n "${NL_LOCK_DIR:-}" ] && rm -rf "$NL_LOCK_DIR"
+    if [ "${NL_LOCAL_LOCK_HELD:-0}" = 1 ] && [ -n "${NL_LOCK_DIR:-}" ] &&
+       [ "$(cat "$NL_LOCK_DIR/pid" 2>/dev/null)" = "$$" ]; then
+        rm -rf "$NL_LOCK_DIR"
+    fi
+    NL_LOCAL_LOCK_HELD=0
     NL_LOCK_DIR=""
+}
+
+# The local lock does not coordinate two computers. Keep this atomic lock on the
+# device across every privileged phase, including the gap between backup and
+# apply or between restore fields. Never remove a lock whose owner is unknown.
+NL_REMOTE_LOCK="/data/local/tmp/nvptool.lock"
+NL_REMOTE_LOCK_HELD=0
+NL_REMOTE_LOCK_OWNER=""
+
+nl_remote_lock_acquire() {
+    [ "${NL_REMOTE_LOCK_HELD:-0}" = 1 ] && return 0
+    local owner="$1" seen
+    if ! nl_adb shell "mkdir $NL_REMOTE_LOCK" >/dev/null 2>&1; then
+        seen=$(nl_adb shell "cat $NL_REMOTE_LOCK/owner" 2>/dev/null | tr -d '\r' || true)
+        nl_die "device is locked by another or interrupted nvptool run (${seen:-owner unknown}); inspect $NL_REMOTE_LOCK before manual recovery" 12
+    fi
+    NL_REMOTE_LOCK_HELD=1
+    NL_REMOTE_LOCK_OWNER="$owner"
+    nl_adb shell "printf '%s\\n' '$owner' > $NL_REMOTE_LOCK/owner" >/dev/null 2>&1 || \
+        nl_die "could not record device lock owner; inspect $NL_REMOTE_LOCK" 7
+}
+
+nl_remote_lock_release() {
+    [ "${NL_REMOTE_LOCK_HELD:-0}" = 1 ] || return 0
+    [ "${NL_SETTINGS_TOUCHED:-0}" = 0 ] || return 1
+    [ -z "${NL_REMOTE_PAYLOAD:-}" ] || return 1
+    local seen
+    seen=$(nl_adb shell "cat $NL_REMOTE_LOCK/owner" 2>/dev/null | tr -d '\r') || return 1
+    [ "$seen" = "$NL_REMOTE_LOCK_OWNER" ] || return 1
+    nl_adb shell "rm -f $NL_REMOTE_LOCK/owner && rmdir $NL_REMOTE_LOCK" >/dev/null 2>&1 || return 1
+    NL_REMOTE_LOCK_HELD=0
 }
 
 # ------------------------------------------------------------------ preflight
@@ -105,12 +154,46 @@ nl_preflight() {
     nl_adb shell "test -r $NL_HAL" >/dev/null 2>&1 || nl_die "HAL apk not readable at $NL_HAL" 11
 }
 
+nl_local_apk() {
+    if [ -n "${NVPTOOL_APK:-}" ]; then
+        case "$NVPTOOL_APK" in /*) ;; *) nl_die "NVPTOOL_APK must be an absolute path" ;; esac
+        printf '%s' "$NVPTOOL_APK"
+    elif [ -f "$HERE/nvptool.apk" ]; then
+        printf '%s' "$HERE/nvptool.apk"
+    else
+        printf '%s' "$HERE/../out/nvptool.apk"
+    fi
+}
+
+nl_trusted_apk_hash() {   # $1 = local packaged/build APK
+    local manifest="$(dirname "$1")/SOURCE-COMMIT.txt" count want got
+    [ -f "$manifest" ] || nl_die "APK provenance file missing: $manifest"
+    count=$(grep -c '^apk_sha256=' "$manifest" || true)
+    [ "$count" = 1 ] || nl_die "APK provenance must contain exactly one apk_sha256"
+    want=$(sed -n 's/^apk_sha256=//p' "$manifest")
+    [[ "$want" =~ ^[0-9a-f]{64}$ ]] || nl_die "APK provenance hash is malformed"
+    got=$(nl_sha256 < "$1") || nl_die "cannot hash bundled APK"
+    [ "$got" = "$want" ] || nl_die "bundled APK does not match SOURCE-COMMIT.txt" 11
+    printf '%s' "$want"
+}
+
 nl_require_apk() {
-    local path ver
+    local path ver local_apk pulled expected got
+    [ -n "${NL_RUN_DIR:-}" ] || nl_die "internal: private run directory missing"
+    local_apk=$(nl_local_apk) || nl_die "cannot locate bundled APK"
+    [ -f "$local_apk" ] || nl_die "trusted bundled APK not found at $local_apk"
+    expected=$(nl_trusted_apk_hash "$local_apk") || nl_die "bundled APK provenance check failed" 11
     path=$(nl_adb shell pm path "$NL_PKG" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | head -1)
-    [ -n "$path" ] || nl_die "helper app is not installed"
+    [ -n "$path" ] || nl_die "helper app is not installed; use menu option 7 or nvptool.sh install"
+    [[ "$path" =~ ^/[A-Za-z0-9_./=+~:-]+$ ]] || nl_die "installed helper has an unsafe APK path"
     ver=$(nl_adb shell dumpsys package "$NL_PKG" 2>/dev/null | tr -d '\r' | sed -n 's/.*versionName=\([^ ]*\).*/\1/p' | head -1)
-    [ "$ver" = "$NL_TOOL_VERSION" ] || nl_die "installed app version '$ver' does not match tool version $NL_TOOL_VERSION"
+    [ "$ver" = "$NL_TOOL_VERSION" ] || nl_die "installed app version '$ver' does not match $NL_TOOL_VERSION; use menu option 7 or nvptool.sh install"
+    pulled="$NL_RUN_DIR/installed-${NL_RUN_ID:-check}.apk"
+    nl_adb pull "$path" "$pulled" >/dev/null 2>&1 || nl_die "could not read installed helper APK"
+    [ -s "$pulled" ] || nl_die "installed helper APK is empty"
+    got=$(nl_sha256 < "$pulled") || nl_die "cannot hash installed helper APK"
+    [ "$got" = "$expected" ] || nl_die "installed helper APK differs from the bundled APK; refusing privileged run" 11
+    NL_VERIFIED_APK_PATH="$path"
 }
 
 # ---------------------------------------------------------------- settings
@@ -121,20 +204,44 @@ nl_require_apk() {
 NL_SETTINGS_STATE=""
 NL_SETTINGS_TOUCHED=0
 NL_SETTINGS_CAPTURED=0
+NL_RECOVERY_FILE=""
+NL_RECOVERY_FILES=()
+NL_CLEANUP_ATTEMPTED=0
 
 nl_settings_capture() {
-    if [ "${NL_SETTINGS_CAPTURED:-0}" = "1" ]; then
-        return 0
-    fi
-    local v
-    v=$(nl_adb shell settings get global hidden_api_blacklist_exemptions 2>/dev/null | tr -d '\r')
-    case "$v" in
-        null)    NL_SETTINGS_STATE="absent" ;;
-        "")      NL_SETTINGS_STATE="empty" ;;
-        *)       NL_SETTINGS_STATE="value:$v" ;;
-    esac
+    nl_settings_assert_absent
+    if [ "${NL_SETTINGS_CAPTURED:-0}" = "1" ]; then return 0; fi
+    NL_SETTINGS_STATE="absent"
     NL_SETTINGS_CAPTURED=1
     NL_SETTINGS_TOUCHED=0
+}
+
+# Re-run before every privileged phase. The first capture remains the command's
+# original state; a separate actor changing the key between phases cannot be
+# adopted as the new original or overwritten by the next payload.
+nl_settings_assert_absent() {
+    local listed v
+    listed=$(nl_adb shell settings list global 2>/dev/null | tr -d '\r') || \
+        nl_die "could not list global settings; refusing before mutation" 1
+    if printf '%s\n' "$listed" | grep -q '^hidden_api_blacklist_exemptions='; then
+        nl_die "hidden_api_blacklist_exemptions already exists; this release refuses to overwrite a present value" 12
+    fi
+    v=$(nl_adb shell settings get global hidden_api_blacklist_exemptions 2>/dev/null | tr -d '\r') || \
+        nl_die "could not read hidden_api_blacklist_exemptions; refusing before mutation" 1
+    [ "$v" = null ] || nl_die "hidden_api_blacklist_exemptions is not verifiably absent; refusing before mutation" 12
+}
+
+nl_record_recovery() {
+    local run="$1" op="$2" dir file
+    dir=$(nl_backup_dir)
+    mkdir -p "$dir" || nl_die "cannot create private recovery directory before mutation"
+    chmod 700 "$dir" || nl_die "cannot protect private recovery directory"
+    file="$dir/recovery-${run}-${op}.state"
+    ( umask 077; set -o noclobber; printf 'serial=%s\nrun=%s\noperation=%s\nsetting=%s\nremote_lock=%s\n' \
+        "$NL_SERIAL" "$run" "$op" "$NL_SETTINGS_STATE" "$NL_REMOTE_LOCK" > "$file" ) || \
+        nl_die "cannot persist original setting before mutation"
+    NL_RECOVERY_FILE="$file"
+    NL_RECOVERY_FILES+=("$file")
 }
 
 
@@ -142,26 +249,22 @@ nl_settings_restore() {
     if [ "${NL_SETTINGS_TOUCHED:-0}" -eq 0 ]; then
         return 0
     fi
-    case "${NL_SETTINGS_STATE:-absent}" in
-        absent)
-            nl_adb shell settings delete global hidden_api_blacklist_exemptions >/dev/null 2>&1 ;;
-        empty)
-            nl_adb shell settings put global hidden_api_blacklist_exemptions "" >/dev/null 2>&1 ;;
-        value:*)
-            nl_adb shell settings put global hidden_api_blacklist_exemptions "${NL_SETTINGS_STATE#value:}" >/dev/null 2>&1 ;;
-    esac
-    local after
-    after=$(nl_adb shell settings get global hidden_api_blacklist_exemptions 2>/dev/null | tr -d '\r')
-    case "${NL_SETTINGS_STATE:-absent}" in
-        absent) [ "$after" = "null" ] && return 0 ;;
-        empty)  [ -z "$after" ] && return 0 ;;
-        value:*) [ "$after" = "${NL_SETTINGS_STATE#value:}" ] && return 0 ;;
-    esac
-    return 1
+    NL_CLEANUP_ATTEMPTED=1
+    [ "${NL_SETTINGS_STATE:-}" = absent ] || return 1
+    nl_adb shell settings delete global hidden_api_blacklist_exemptions >/dev/null 2>&1 || return 1
+    local after listed
+    listed=$(nl_adb shell settings list global 2>/dev/null | tr -d '\r') || return 1
+    printf '%s\n' "$listed" | grep -q '^hidden_api_blacklist_exemptions=' && return 1
+    after=$(nl_adb shell settings get global hidden_api_blacklist_exemptions 2>/dev/null | tr -d '\r') || return 1
+    [ "$after" = null ] || return 1
+    NL_SETTINGS_TOUCHED=0
+    [ -n "$NL_RECOVERY_FILE" ] && printf 'cleanup=verified_absent\n' >> "$NL_RECOVERY_FILE"
+    return 0
 }
 
 # --------------------------------------------------------- privileged run
-NL_REMOTE_PAYLOAD="/data/local/tmp/nvptool_payload.txt"
+NL_REMOTE_PAYLOAD=""
+NL_REMOTE_FILE_CLEANUP_ATTEMPTED=0
 NL_INJECT_RC=1
 NL_CLEANUP_OK=1
 
@@ -184,18 +287,31 @@ nl_build_payload() {   # $1 class, $2 run id, remaining = tool args (space free)
 nl_inject() {   # nl_inject <class> <op> <runid> [tool args...]
     local cls="$1" op="$2" run="$3"
     shift 3
-    local apk
-    apk=$(nl_adb shell pm path "$NL_PKG" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | head -1)
-    [ -n "$apk" ] || nl_die "helper app is not installed"
+    NL_RUN_ID="$run"
+    nl_remote_lock_acquire "$run"
+    nl_require_apk
+    local apk="$NL_VERIFIED_APK_PATH"
+    NL_REMOTE_PAYLOAD="/data/local/tmp/nvptool-${run}-${op}.txt"
+    NL_REMOTE_FILE_CLEANUP_ATTEMPTED=0
 
     nl_build_payload "$cls" "$run" "$apk" "$@"
 
     nl_settings_capture
+    nl_record_recovery "$run" "$op"
     nl_adb push "$NL_RUN_DIR/payload.txt" "$NL_REMOTE_PAYLOAD" >/dev/null 2>&1 \
         || nl_die "could not push payload (settings untouched)"
+    nl_adb shell "chmod 600 $NL_REMOTE_PAYLOAD" >/dev/null 2>&1 || \
+        nl_die "could not protect remote payload (settings untouched)"
     NL_SETTINGS_TOUCHED=1
+    NL_CLEANUP_ATTEMPTED=0
     nl_adb shell "settings put global hidden_api_blacklist_exemptions \"\$(cat $NL_REMOTE_PAYLOAD)\"" >/dev/null 2>&1 \
-        || { nl_settings_restore; nl_die "could not install payload"; }
+        || {
+            if nl_settings_restore; then
+                nl_die "could not install payload; original setting verified restored"
+            else
+                nl_die "could not install payload AND could not restore original setting; recovery record: $NL_RECOVERY_FILE" 7
+            fi
+        }
     nl_adb shell am force-stop com.android.settings >/dev/null 2>&1
     nl_adb shell am start -a android.settings.SETTINGS >/dev/null 2>&1
 
@@ -209,8 +325,20 @@ nl_inject() {   # nl_inject <class> <op> <runid> [tool args...]
     printf '%s\n' "$lines" > "$NL_RUN_DIR/result.txt"
 
     # cleanup: only this run's files and the setting we touched
-    nl_adb shell "rm -f $NL_REMOTE_PAYLOAD" >/dev/null 2>&1
-    if nl_settings_restore; then NL_CLEANUP_OK=1; else NL_CLEANUP_OK=0; fi
+    local file_clean=1 setting_clean=1
+    NL_REMOTE_FILE_CLEANUP_ATTEMPTED=1
+    nl_adb shell "rm -f $NL_REMOTE_PAYLOAD" >/dev/null 2>&1 || file_clean=0
+    [ "$file_clean" = 1 ] && NL_REMOTE_PAYLOAD=""
+    nl_settings_restore || setting_clean=0
+    if [ "$file_clean" = 1 ] && [ "$setting_clean" = 1 ]; then
+        NL_CLEANUP_OK=1
+    else
+        NL_CLEANUP_OK=0
+    fi
+
+    # Prioritise an unclean device even when the Java operation also failed or
+    # timed out. The result is retained so the user sees both failure modes.
+    nl_require_cleanup "$op"
 
     if printf '%s' "$lines" | grep -q "ev=summary"; then
         NL_INJECT_RC=0
@@ -419,13 +547,14 @@ nl_require_cleanup() {   # $1 = operation label
         return 0
     fi
     nl_journal "cleanup-failed" "op=$1"
-    nl_die "$1: the NVRAM operation itself finished, but the temporary setting
-hidden_api_blacklist_exemptions could NOT be restored. This is a
-recovery-required state, not a clean success.
+    local result
+    result=$(grep 'ev=summary' "$NL_RUN_DIR/result.txt" 2>/dev/null | tail -1 || true)
+    nl_die "$1: cleanup failed after the operation (result: ${result:-UNKNOWN}).
+hidden_api_blacklist_exemptions or the run's remote file could not be verified clean.
+This is recovery-required, regardless of the operation's result.
 
-  Check:    adb shell settings get global hidden_api_blacklist_exemptions
-  Expected: null (stock) or your original value
-  Original: ${NL_SETTINGS_STATE:-unknown}
-
-Do not treat the player as clean until that matches." 7
+  Original setting: ${NL_SETTINGS_STATE:-unknown}
+  Recovery record: ${NL_RECOVERY_FILE:-none}
+  Device lock: $NL_REMOTE_LOCK
+  Check the setting and record before manual lock recovery." 7
 }

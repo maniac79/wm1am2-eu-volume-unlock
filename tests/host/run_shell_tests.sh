@@ -24,8 +24,11 @@ newenv() {
     export NVPTOOL_BACKUP_DIR="$T/backups"
     export TMPDIR="$T/tmp"
     mkdir -p "$FAKE_STATE_DIR" "$TMPDIR"
+    export NVPTOOL_APK="$T/nvptool.apk"
+    printf 'trusted-mock-apk\n' > "$NVPTOOL_APK"
+    printf 'apk_sha256=%s\n' "$(shasum -a 256 "$NVPTOOL_APK" | cut -d' ' -f1)" > "$T/SOURCE-COMMIT.txt"
     export PATH="$FAKEBIN:$PATH"
-    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE 2>/dev/null || true
+    unset FAKE_RESPONSE FAKE_RESPONSE_READ FAKE_RESPONSE_WRITE FAKE_DEVICES FAKE_MODEL FAKE_FP FAKE_PKGVER FAKE_BK_HEX NVPTOOL_SERIAL FAKE_PROFILE FAKE_SETTINGS_RESTORE_FAIL FAKE_SETTINGS_GET_FAIL FAKE_SETTINGS_LIST_FAIL NVPTOOL_ALLOW_NON_BASELINE_RESTORE FAKE_INSTALLED FAKE_INSTALLED_APK 2>/dev/null || true
 }
 
 nv() {   # nv <args...> ; sets OUT and RC
@@ -63,7 +66,7 @@ expect_has "unknown firmware message" "unsupported firmware" "$OUT"
 
 newenv; export FAKE_PKGVER="1.0.0"; nv apply
 expect_rcnz "stale app version aborts" "$RC"
-expect_has "version mismatch message" "does not match tool version" "$OUT"
+expect_has "version mismatch message" "does not match 0.2.3" "$OUT"
 
 echo "== read + backup =="
 newenv; nv read
@@ -123,7 +126,9 @@ expect_hasnt "no write attempted" "Apply" "$(tail -1 "$FAKE_STATE_DIR/payload.tx
 
 echo "== settings preservation =="
 newenv; printf 'EXISTING-VALUE' > "$FAKE_STATE_DIR/setting"; nv apply
-[ "$(cat "$FAKE_STATE_DIR/setting" 2>/dev/null)" = "EXISTING-VALUE" ] && ok || bad "existing setting not restored"
+expect_rc "present setting refused" 12 "$RC"
+[ "$(cat "$FAKE_STATE_DIR/setting" 2>/dev/null)" = "EXISTING-VALUE" ] && ok || bad "present setting changed"
+expect_hasnt "present setting does not reach payload" "push" "$(cat "$FAKE_STATE_DIR/calls.log")"
 
 newenv; nv apply
 [ -f "$FAKE_STATE_DIR/setting" ] && bad "absent setting was recreated" || ok
@@ -194,8 +199,8 @@ expect_rc "read cleanup failure rc" 7 "$RC"
 echo "== apply stops before the write phase when the read phase is unclean =="
 newenv; : > "$FAKE_STATE_DIR/calls.log"; export FAKE_SETTINGS_RESTORE_FAIL=1; nv apply
 expect_rc "aborted apply rc" 7 "$RC"
-expect_has "aborted apply says the write never started" "write phase was NOT started" "$OUT"
-expect_has "aborted apply still reports its backup" "backup:" "$OUT"
+expect_has "aborted apply reports cleanup" "recovery-required" "$OUT"
+expect_hasnt "aborted apply did not claim success" "apply OK" "$OUT"
 # One privileged run = the backup read. A second one would be the write.
 NINJ=$(grep -c 'settings put global hidden_api_blacklist_exemptions' "$FAKE_STATE_DIR/calls.log" 2>/dev/null || true)
 expect_rc "only the backup read ran, no write phase" 1 "$NINJ"
@@ -210,8 +215,8 @@ export FAKE_SETTINGS_RESTORE_FAIL=1
 nv restore
 expect_rc "aborted restore rc" 7 "$RC"
 expect_hasnt "aborted restore no success claim" "restore OK" "$OUT"
-expect_has "aborted restore names the field it stopped after" "stopped after field 0" "$OUT"
-expect_has "aborted restore counts the unwritten fields" "NOT written: 7 field(s)" "$OUT"
+expect_has "aborted restore reports recovery" "recovery-required" "$OUT"
+expect_has "aborted restore retains run metadata" "Recovery record:" "$OUT"
 # One privileged run after the reset = field 0 only; six more would follow.
 NINJ=$(grep -c 'settings put global hidden_api_blacklist_exemptions' "$FAKE_STATE_DIR/calls.log" 2>/dev/null || true)
 expect_rc "exactly one field was written" 1 "$NINJ"
@@ -225,6 +230,80 @@ expect_has "restore-reference states recovery-required" "recovery-required" "$OU
 expect_has "restore-reference names the setting" "hidden_api_blacklist_exemptions" "$OUT"
 expect_has "reference restore really left the setting dirty" "NVPTOOL-PAYLOAD" \
     "$(cat "$FAKE_STATE_DIR/setting" 2>/dev/null)"
+
+echo "== installed APK identity and explicit installation =="
+newenv; export FAKE_INSTALLED=0; nv read
+expect_rcnz "missing helper refuses read" "$RC"
+expect_has "missing helper explains install" "menu option 7" "$OUT"
+expect_hasnt "missing helper never pushes payload" "push" "$(cat "$FAKE_STATE_DIR/calls.log")"
+nv install
+expect_rc "explicit install succeeds" 0 "$RC"
+nv read
+expect_rc "read succeeds after install" 0 "$RC"
+
+newenv; printf 'counterfeit-apk\n' > "$T/counterfeit.apk"
+export FAKE_INSTALLED_APK="$T/counterfeit.apk"
+nv apply
+expect_rc "counterfeit helper refuses" 11 "$RC"
+expect_has "counterfeit helper explained" "differs from the bundled APK" "$OUT"
+expect_hasnt "counterfeit helper cannot reach settings" "settings put" "$(cat "$FAKE_STATE_DIR/calls.log")"
+
+newenv; printf 'tampered' >> "$NVPTOOL_APK"; nv read
+expect_rc "modified bundled APK refuses" 11 "$RC"
+expect_has "modified bundled APK explained" "does not match SOURCE-COMMIT.txt" "$OUT"
+expect_hasnt "modified APK cannot reach settings" "settings put" "$(cat "$FAKE_STATE_DIR/calls.log")"
+
+echo "== settings capture refuses ambiguity before mutation =="
+newenv; export FAKE_SETTINGS_LIST_FAIL=1; nv read
+expect_rc "settings list failure refuses" 1 "$RC"
+expect_hasnt "list failure cannot push" "push" "$(cat "$FAKE_STATE_DIR/calls.log")"
+newenv; export FAKE_SETTINGS_GET_FAIL=1; nv read
+expect_rc "settings get failure refuses" 1 "$RC"
+expect_hasnt "get failure cannot push" "push" "$(cat "$FAKE_STATE_DIR/calls.log")"
+newenv; printf 'null' > "$FAKE_STATE_DIR/setting"; nv read
+expect_rc "literal null value refuses" 12 "$RC"
+expect_hasnt "literal null cannot push" "push" "$(cat "$FAKE_STATE_DIR/calls.log")"
+
+echo "== remote lock, recovery record, and unique payload =="
+newenv; : > "$FAKE_STATE_DIR/remote_lock"; nv read
+expect_rc "existing device lock refuses" 12 "$RC"
+expect_hasnt "existing lock cannot push" "push" "$(cat "$FAKE_STATE_DIR/calls.log")"
+newenv; mkdir "$TMPDIR/nvptool.lock.SER123"; printf '999999' > "$TMPDIR/nvptool.lock.SER123/pid"; nv read
+expect_rc "stale local lock refuses" 12 "$RC"
+[ -f "$TMPDIR/nvptool.lock.SER123/pid" ] && ok || bad "stale local lock was deleted"
+newenv; export FAKE_SETTINGS_RESTORE_FAIL=1 FAKE_RESPONSE_READ=fatal; nv read
+expect_rc "operation plus cleanup failure prioritises recovery" 7 "$RC"
+expect_has "both failures shown" "status=FATAL" "$OUT"
+expect_has "recovery reported" "recovery-required" "$OUT"
+[ -f "$FAKE_STATE_DIR/remote_lock" ] && ok || bad "device lock lost after cleanup failure"
+REC=$(find "$NVPTOOL_BACKUP_DIR" -name 'recovery-*.state' -print -quit)
+[ -n "$REC" ] && [ -f "$REC" ] && ok || bad "recovery record missing after cleanup failure"
+
+newenv; nv apply
+PUSHES=$(grep ' push ' "$FAKE_STATE_DIR/calls.log" | sed -n 's/.* \(\/data\/local\/tmp\/nvptool-[^ ]*\.txt\)$/\1/p' | sort -u | wc -l | tr -d ' ')
+expect_rc "apply uses distinct remote payload paths" 2 "$PUSHES"
+ACQUIRES=$(grep -c 'mkdir /data/local/tmp/nvptool.lock' "$FAKE_STATE_DIR/calls.log" || true)
+expect_rc "device lock held across apply phases" 1 "$ACQUIRES"
+REC_COUNT=$(find "$NVPTOOL_BACKUP_DIR" -name 'recovery-*.state' | wc -l | tr -d ' ')
+expect_rc "clean phases leave no recovery records" 0 "$REC_COUNT"
+
+echo "== catchable signal restores setting before unlock =="
+newenv; export FAKE_RESPONSE_READ=noout
+./tools/nvptool.sh read > "$T/signal.out" 2>&1 & NV_PID=$!
+for _ in $(seq 1 40); do
+    [ -f "$FAKE_STATE_DIR/setting" ] && break
+    sleep 0.1
+done
+if [ -f "$FAKE_STATE_DIR/setting" ]; then
+    kill -TERM "$NV_PID" 2>/dev/null || true
+    wait "$NV_PID" 2>/dev/null || true
+    [ ! -f "$FAKE_STATE_DIR/setting" ] && ok || bad "TERM left temporary setting behind"
+    [ ! -f "$FAKE_STATE_DIR/remote_lock" ] && ok || bad "TERM left device lock despite clean restore"
+else
+    bad "signal test never reached temporary setting"
+    kill -TERM "$NV_PID" 2>/dev/null || true
+    wait "$NV_PID" 2>/dev/null || true
+fi
 
 echo "== menu.sh delegates and shows the orchestrator output =="
 newenv

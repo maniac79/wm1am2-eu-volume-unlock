@@ -33,7 +33,7 @@ chmod 700 "$(dirname "$KS")"
 
 # 256-bit random password, hex encoded, no shell metacharacters.
 if command -v openssl >/dev/null 2>&1; then
-    PASS=$(openssl rand -hex 32)
+PASS=$(openssl rand -hex 32)
 else
     PASS=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 fi
@@ -44,7 +44,7 @@ chmod 600 "$PASSFILE"
 
 keytool -genkeypair \
     -keystore "$KS" -storetype PKCS12 \
-    -storepass "$PASS" -keypass "$PASS" \
+    -storepass:file "$PASSFILE" -keypass:file "$PASSFILE" \
     -alias "$ALIAS" -keyalg RSA -keysize 4096 -validity 10950 \
     -dname "CN=nvptool release key, O=wm1am2-eu-volume-unlock, C=DE" \
     >/dev/null 2>&1
@@ -57,7 +57,7 @@ echo "created password : $PASSFILE (0600, not printed)"
 echo
 echo "Certificate fingerprint - pin this in tools/build.sh:"
 keytool -list -v -keystore "$KS" -storetype PKCS12 -alias "$ALIAS" \
-        -storepass "$(cat "$PASSFILE")" 2>/dev/null \
+        -storepass:file "$PASSFILE" 2>/dev/null \
     | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | head -1
 echo
 echo "Back up BOTH files. Without them, a future release cannot upgrade"

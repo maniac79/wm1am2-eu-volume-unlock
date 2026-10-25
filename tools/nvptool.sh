@@ -6,6 +6,7 @@
 #   nvptool.sh apply              back up, then write the target configuration
 #   nvptool.sh restore [file]     restore each field from a validated backup
 #   nvptool.sh restore-reference  ADVANCED: reference profile, no backup needed
+#   nvptool.sh install            explicitly install the bundled helper APK
 #
 # Binds to exactly one adb device, takes a per-device lock, preserves the
 # previous hidden_api_blacklist_exemptions value, and requires a complete
@@ -17,8 +18,46 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CMD="${1:-status}"
 
-nl_on_exit() { nl_cleanup_local; nl_lock_release; }
-trap nl_on_exit EXIT INT TERM
+nl_on_exit() {
+    local rc="$1"
+    trap - EXIT INT TERM
+    if [ "${NL_SETTINGS_TOUCHED:-0}" = 1 ] && [ "${NL_CLEANUP_ATTEMPTED:-0}" = 0 ]; then
+        if ! nl_settings_restore; then
+            printf 'nvptool: EXIT cleanup could not restore hidden_api_blacklist_exemptions; recovery record: %s; device lock: %s\n' \
+                "${NL_RECOVERY_FILE:-none}" "$NL_REMOTE_LOCK" >&2
+            rc=7
+        fi
+    fi
+    if [ -n "${NL_REMOTE_PAYLOAD:-}" ] && [ "${NL_REMOTE_FILE_CLEANUP_ATTEMPTED:-0}" = 0 ]; then
+        if nl_adb shell "rm -f $NL_REMOTE_PAYLOAD" >/dev/null 2>&1; then
+            NL_REMOTE_PAYLOAD=""
+        else
+            printf 'nvptool: EXIT cleanup could not remove remote payload %s\n' "$NL_REMOTE_PAYLOAD" >&2
+            rc=7
+        fi
+    fi
+    if [ "${NL_REMOTE_LOCK_HELD:-0}" = 1 ]; then
+        if ! nl_remote_lock_release; then
+            printf 'nvptool: device lock remains at %s; inspect recovery record %s before manual unlock\n' \
+                "$NL_REMOTE_LOCK" "${NL_RECOVERY_FILE:-none}" >&2
+            rc=7
+        fi
+    fi
+    if [ "${NL_SETTINGS_TOUCHED:-0}" = 0 ] &&
+       [ "${NL_REMOTE_LOCK_HELD:-0}" = 0 ] &&
+       [ -z "${NL_REMOTE_PAYLOAD:-}" ]; then
+        local record
+        if [ "${#NL_RECOVERY_FILES[@]}" -gt 0 ]; then
+            for record in "${NL_RECOVERY_FILES[@]}"; do rm -f "$record"; done
+        fi
+    fi
+    nl_cleanup_local
+    nl_lock_release
+    exit "$rc"
+}
+trap 'nl_on_exit $?' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 nl_hex_ascii_padded() {   # $1 ascii, $2 length in bytes -> hex
     local hx want
@@ -79,8 +118,8 @@ nl_cmd_read() {
     nl_select_device
     nl_lock_acquire
     nl_preflight
-    nl_require_apk
     nl_mktempdir
+    nl_require_apk
     NL_RUN_ID="$(date +%s)-$$-$RANDOM"
 
     nl_journal "read-start" "tool=$NL_TOOL_VERSION"
@@ -103,8 +142,8 @@ nl_cmd_apply() {
     nl_select_device
     nl_lock_acquire
     nl_preflight
-    nl_require_apk
     nl_mktempdir
+    nl_require_apk
     NL_RUN_ID="$(date +%s)-$$-$RANDOM"
 
     # 1. back up first; nothing is written until a verified backup exists
@@ -180,8 +219,8 @@ nl_cmd_restore() {
     nl_select_device
     nl_lock_acquire
     nl_preflight
-    nl_require_apk
     nl_mktempdir
+    nl_require_apk
 
     [ -n "$file" ] || file=$(nl_backup_latest) || \
         nl_die "no original (baseline) backup found for this device.
@@ -252,8 +291,8 @@ nl_cmd_restore_reference() {
     nl_select_device
     nl_lock_acquire
     nl_preflight
-    nl_require_apk
     nl_mktempdir
+    nl_require_apk
     NL_RUN_ID="$(date +%s)-$$-$RANDOM"
     nl_journal "restore-reference-start" "run=$NL_RUN_ID"
     nl_inject "org.maniac79.nvptool.RestoreReference" "restore_reference" \
@@ -276,6 +315,22 @@ nl_cmd_reboot() {
     printf 'reboot requested.\n'
 }
 
+nl_cmd_install() {
+    nl_select_device
+    nl_lock_acquire
+    nl_preflight
+    nl_mktempdir
+    local apk
+    apk=$(nl_local_apk) || nl_die "cannot locate bundled APK"
+    [ -f "$apk" ] || nl_die "bundled helper APK not found at $apk"
+    nl_trusted_apk_hash "$apk" >/dev/null || nl_die "bundled APK provenance check failed" 11
+    NL_RUN_ID="$(date +%s)-$$-$RANDOM"
+    nl_remote_lock_acquire "$NL_RUN_ID"
+    nl_adb install -r "$apk" || nl_die "APK installation failed; no package was uninstalled" 6
+    nl_require_apk
+    printf 'bundled helper installed and byte-verified for %s\n' "$NL_SERIAL"
+}
+
 case "$CMD" in
     status)            nl_cmd_status ;;
     read)              nl_cmd_read ;;
@@ -283,9 +338,10 @@ case "$CMD" in
     restore)           shift; nl_cmd_restore "${1:-}" ;;
     restore-reference) nl_cmd_restore_reference ;;
     reboot)            nl_cmd_reboot ;;
+    install)           nl_cmd_install ;;
     -h|--help|help)    sed -n '2,12p' "$0" ;;
     *)
-        echo "unknown command: $CMD (try: status read apply restore restore-reference)" >&2
+        echo "unknown command: $CMD (try: status read apply restore restore-reference reboot install)" >&2
         exit 64 ;;
 esac
 

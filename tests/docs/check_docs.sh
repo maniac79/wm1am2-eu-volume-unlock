@@ -17,9 +17,9 @@ bad() { FAIL=$((FAIL + 1)); FAILED="$FAILED
 # Each source is parsed with its own syntax so that `case`/`switch` branches
 # (which also look like "3) something") cannot be mistaken for the menu itself.
 norm() { sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'; }
-opts_sh()  { sed -nE 's/^[[:space:]]*echo "[[:space:]]*([0-6]\) [A-Za-z][^"]*)".*/\1/p' "$1" 2>/dev/null | norm | sort -u; }
-opts_ps()  { sed -nE "s/^[[:space:]]*Write-Host '[[:space:]]*([0-6]\) [A-Za-z][^']*)'.*/\1/p" "$1" 2>/dev/null | norm | sort -u; }
-opts_doc() { sed -nE 's/^[[:space:]]*([0-6]\) [A-Za-z][^"]*)$/\1/p' "$1" 2>/dev/null | norm | sort -u; }
+opts_sh()  { sed -nE 's/^[[:space:]]*echo "[[:space:]]*([0-7]\) [A-Za-z][^"]*)".*/\1/p' "$1" 2>/dev/null | norm | sort -u; }
+opts_ps()  { sed -nE "s/^[[:space:]]*Write-Host '[[:space:]]*([0-7]\) [A-Za-z][^']*)'.*/\1/p" "$1" 2>/dev/null | norm | sort -u; }
+opts_doc() { sed -nE 's/^[[:space:]]*([0-7]\) [A-Za-z][^"]*)$/\1/p' "$1" 2>/dev/null | norm | sort -u; }
 
 MENU_SH=packaging/common/menu.sh
 MENU_PS=packaging/windows/menu.ps1
@@ -32,7 +32,7 @@ if [ ! -f "$MENU_SH" ]; then
 else
     OPTS=$(opts_sh "$MENU_SH")
     COUNT=$(printf '%s\n' "$OPTS" | grep -c ') ' || true)
-    if [ "$COUNT" -ge 6 ]; then ok; else bad "menu.sh exposes only $COUNT options"; fi
+    if [ "$COUNT" -ge 8 ]; then ok; else bad "menu.sh exposes only $COUNT options"; fi
     for pair in "$MENU_PS:ps" "$QS:doc" "$README:doc"; do
         f=${pair%:*}; kind=${pair##*:}
         if [ ! -f "$f" ]; then bad "missing $f"; continue; fi
@@ -49,7 +49,8 @@ fi
 echo "== AUDIT: the menu must distinguish restore, apply and the advanced path =="
 if opts_sh "$MENU_SH" | grep -q '^3) Apply'; then ok; else bad "menu option 3 is not an apply"; fi
 if opts_sh "$MENU_SH" | grep -q '^4) Restore from backup'; then ok; else bad "menu option 4 is not a backup restore"; fi
-if grep -qF 'restore-ref' "$QS" && grep -qF 'ADVANCED' "$QS"; then
+if opts_sh "$MENU_SH" | grep -q '^7) Install'; then ok; else bad "menu option 7 does not offer explicit helper installation"; fi
+if grep -qF 'restore-ref' "$QS" && grep -qiF 'advanced' "$QS"; then
     ok
 else
     bad "QUICKSTART does not document restore-ref separately as an advanced path"
@@ -76,10 +77,16 @@ if grep -qiE 'Restore factory setting|undoes everything' "$QS"; then
 else
     ok
 fi
+if grep -qiE 'menu installs the APK for you|menu offers to install it from nvptool.apk when needed' "$QS" "$README"; then
+    bad "documentation still promises implicit helper installation"
+else
+    ok
+fi
 
 echo "== QUICKSTART must carry the validation limits =="
 for phrase in 'NOT been validated on physical hardware' 'simulated adb' \
-              'no exploit, no risk' 'NO verified original EU baseline backup'; do
+              'no exploit, no risk' \
+              'A snapshot of an already-modified player is NOT proof of the original EU baseline.'; do
     if grep -qF "$phrase" "$QS"; then ok; else bad "QUICKSTART lacks: $phrase"; fi
 done
 
@@ -102,18 +109,31 @@ for pair in "manifest:$V_MANIFEST" "lib:$V_LIB" "ps1:$V_PS" "fakeadb:$V_ADB"; do
 done
 case "$V_CODE" in ''|*[!0-9]*) bad "versionCode is not numeric ('$V_CODE')" ;; *) ok ;; esac
 
-# The release name in the README must point at the current version.
-if grep -qF "releases/tag/v$V_PROFILE" "$README"; then ok; else bad "README does not point at v$V_PROFILE"; fi
+# Before publication, the README must say explicitly that this source version
+# is not a published release; afterwards it must link the matching release.
+if grep -qF "releases/tag/v$V_PROFILE" "$README" ||
+   grep -qF "This $V_PROFILE source is not a published release yet." "$README"; then
+    ok
+else
+    bad "README neither links v$V_PROFILE nor labels it unpublished"
+fi
 
 echo "== archive names carry the current version =="
 for os in macos windows linux; do
     name="wm1am2-nvptool-$os-$V_PROFILE.zip"
     if grep -qF "$name" "$README"; then ok; else bad "README does not name $name"; fi
 done
-if grep -qF 'out="$d-$VER.zip"' packaging/make_release.sh; then
+if grep -qF 'out="$d-$VER$suffix.zip"' packaging/make_release.sh &&
+   grep -qF 'PACKAGE_ELIGIBLE=true' packaging/make_release.sh; then
     ok
 else
-    bad "make_release.sh does not build versioned archive names"
+    bad "make_release.sh does not separate official and candidate archive names"
+fi
+if grep -qF 'release_receipt.py verify' packaging/make_release.sh &&
+   grep -qF 'PACKAGE-INPUTS.json' packaging/make_release.sh; then
+    ok
+else
+    bad "release packaging does not verify a fresh APK receipt and package inputs"
 fi
 
 echo "== the signing pin and its documentation agree =="
