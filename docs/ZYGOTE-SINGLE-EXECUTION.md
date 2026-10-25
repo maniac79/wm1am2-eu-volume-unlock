@@ -261,3 +261,41 @@ restart - a reboot - clears it.
 
 The broadcast trigger was reverted together with the rest of the experiment; the
 tree stays at the fail-closed state where a run without a claim refuses.
+
+## 9. Adopted model: one privileged operation per boot
+
+Because neither the duplicate nor the app-start damage can be prevented from the
+payload or the host on this firmware (sections 7 and 8), the tool now states the
+cost instead of hiding it.
+
+**What `read` does**
+
+- It performs the privileged read. Two executions are expected (one request, one
+  retry).
+- The host accepts the result **only if every execution** was `status=OK`,
+  `written=0`, `verified=total=8`, and **all executions returned byte-identical
+  values** for all eight fields. Any disagreement, any write, or any malformed
+  execution is refused (`not_ok`, `not_read_only`, `value_mismatch_<i>`, ...).
+- On success it prints the duplicate count and: **REBOOT REQUIRED before using the
+  player again**, because in this boot every further app start is replaced by the
+  payload.
+
+**What is still refused**
+
+- `apply`, `restore`, `restore-reference`: unchanged write hold (exit 13). A
+  duplicate write is idempotent per field, but the result could not be verified
+  in the same boot, since verification needs an app start.
+
+**Why this is honest rather than convenient**
+
+- The invariant is no longer "exactly one execution" (unachievable here) but
+  "every execution agreed, and none wrote". For a read those are equivalent in
+  outcome; for a write they are not, which is exactly why writes stay closed.
+
+**Operational summary for this firmware**
+
+| action | per boot | cost |
+|---|---|---|
+| `status` | unlimited | none |
+| `read` | one | reboot afterwards |
+| `apply` / `restore` / `restore-reference` | none | held |

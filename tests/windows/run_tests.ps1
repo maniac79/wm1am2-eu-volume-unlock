@@ -374,12 +374,13 @@ Check 'restore-reference is held' ((Run-Nv @('restore-reference')).Rc -eq 13)
 $r = Run-Nv @('read')
 Check 'read is not held' (-not ($r.Out -match 'writes are disabled'))
 
-Write-Host '== a request must not execute twice (late duplicate in the settle window) =='
+Write-Host '== identical read-only duplicates are accepted and flagged =='
 [void](New-Env); $env:FAKE_DUP_LATE = '1'
 $r = Run-Nv @('read')
-Check 'duplicate execution is rejected' ($r.Rc -ne 0)
-Check 'duplicate execution is not reported as success' (-not ($r.Out -match 'read OK'))
-Check 'duplicate execution names the defect' ($r.Out -match 'begin x2|summary x2|two processes')
+Check 'identical duplicates accepted' ($r.Rc -eq 0)
+Check 'read result still reported' ($r.Out -match 'read OK')
+Check 'duplicate count surfaced' ($r.Out -match 'duplicate device execution')
+Check 'reboot required stated' ($r.Out -match 'REBOOT REQUIRED')
 
 Write-Host '== a run without the claim record is rejected =='
 [void](New-Env); $env:FAKE_NO_CLAIM = '1'

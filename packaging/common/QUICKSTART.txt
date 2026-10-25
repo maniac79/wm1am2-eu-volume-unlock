@@ -7,8 +7,14 @@
 
    Options 3 (apply), 4 (restore) and the advanced reference restore stop with
    exit code 13 and write nothing. Reason: on Android 11 one privileged request
-   can execute more than once on the device, and that is not yet safe for
-   writes. Options 1 (status), 2 (read) and 5 (reboot) work normally.
+   executes several times on the device, which cannot be prevented; a write
+   could not be verified afterwards, so writes stay closed.
+
+   Option 2 (read) works, with a cost you must accept: do ONE privileged read
+   per boot, then reboot. After a read, Android replaces every new app process
+   with the tool's payload in that boot, so apps (including Settings) will not
+   open until the player is restarted. The tool says so after every read.
+   Option 1 (status) has no such cost and can be used as often as you like.
    Details: docs/ZYGOTE-SINGLE-EXECUTION.md in the repository.
 
    The project author reports a successful ORIGINAL MANUAL change on one

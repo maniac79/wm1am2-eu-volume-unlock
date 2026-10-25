@@ -333,11 +333,12 @@ expect_rc "restore-reference is held" 13 "$RC"
 nv read
 expect_hasnt "read is not held" "writes are disabled" "$OUT"
 
-echo "== a request must not execute twice (late duplicate in the settle window) =="
+echo "== identical read-only duplicates are accepted and flagged =="
 newenv; export FAKE_DUP_LATE=1; nv read
-expect_rcnz "duplicate execution is rejected" "$RC"
-expect_hasnt "duplicate execution is not reported as success" "read OK" "$OUT"
-if printf '%s' "$OUT" | grep -qE 'bad_begin_count|bad_summary_count'; then ok; else bad "duplicate execution does not name the defect"; fi
+expect_rc "identical duplicates accepted" 0 "$RC"
+expect_has "read result still reported" "read OK" "$OUT"
+expect_has "duplicate count surfaced" "duplicate device execution" "$OUT"
+expect_has "reboot required stated" "REBOOT REQUIRED" "$OUT"
 : > "$FAKE_STATE_DIR/calls.log"
 
 echo "== a run without the claim record is rejected =="

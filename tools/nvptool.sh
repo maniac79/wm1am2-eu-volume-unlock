@@ -136,6 +136,13 @@ nl_cmd_read() {
     nl_require_cleanup "read"
     nl_journal "read-ok" "kind=$kind"
     printf 'read OK (%s configuration)\nbackup: %s\n' "$kind" "$NL_BACKUP_FILE"
+
+    if [ "${NL_DUPLICATES:-0}" -gt 0 ]; then
+        printf '\nNOTE: %s duplicate device execution(s); all were read-only and returned\n' "$NL_DUPLICATES"
+        printf 'identical values, so the result is valid.\n'
+        printf 'REBOOT REQUIRED before using the player again: in this boot every new app\n'
+        printf 'process is replaced by the payload (docs/ZYGOTE-SINGLE-EXECUTION.md).\n'
+    fi
 }
 
 nl_cmd_apply() {

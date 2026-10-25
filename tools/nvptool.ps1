@@ -387,6 +387,44 @@ function Assert-Result {
 
     $begins = @($lines | Where-Object { $_ -match 'ev=begin' })
     $sums   = @($lines | Where-Object { $_ -match 'ev=summary' })
+
+    # A single armed request executes more than once on this firmware and that
+    # cannot be prevented (docs/ZYGOTE-SINGLE-EXECUTION.md). For a READ it is
+    # acceptable only when every execution was read-only and all executions
+    # returned byte-identical values. Writes never take this path.
+    if ($Op -eq 'read' -and $begins.Count -gt 1) {
+        $byPid = @{}
+        foreach ($l in $lines) {
+            $p = Get-Token $l 'pid'
+            if (-not $p) { Fail 'malformed duplicate execution records (no pid)' 4 }
+            if (-not $byPid.ContainsKey($p)) {
+                $byPid[$p] = [pscustomobject]@{ Begin = 0; Sum = 0; Fields = @{} }
+            }
+            if ($l -match 'ev=begin') { $byPid[$p].Begin++ }
+            elseif ($l -match 'ev=summary') {
+                $byPid[$p].Sum++
+                if ((Get-Token $l 'status') -ne 'OK') { Fail 'duplicate execution was not OK: outcome UNKNOWN' 4 }
+                if ((Get-Token $l 'written') -ne '0') { Fail 'duplicate execution wrote: refusing' 4 }
+            } elseif ($l -match 'ev=field') {
+                $byPid[$p].Fields[(Get-Token $l 'idx')] = (Get-Token $l 'val')
+            }
+        }
+        foreach ($p in $byPid.Keys) {
+            if ($byPid[$p].Begin -ne 1 -or $byPid[$p].Sum -ne 1 -or $byPid[$p].Fields.Count -ne 8) {
+                Fail 'malformed duplicate execution records' 4
+            }
+        }
+        for ($i = 0; $i -lt 8; $i++) {
+            $vals = @($byPid.Keys | ForEach-Object { $byPid[$_].Fields["$i"] } | Sort-Object -Unique)
+            if ($vals.Count -ne 1) { Fail "duplicate executions disagree on field $i" 4 }
+        }
+        $dup = $byPid.Count - 1
+        return [pscustomobject]@{
+            Status = 'OK'; Written = '0'; Verified = '8'; Total = '8'
+            Reason = "$dup duplicates, identical"; Fields = @(); Duplicates = $dup
+        }
+    }
+
     if ($begins.Count -ne 1) { Fail "malformed result (begin x$($begins.Count)): outcome UNKNOWN" 4 }
     if ($sums.Count -ne 1)   { Fail "malformed result (summary x$($sums.Count)): outcome UNKNOWN" 4 }
 
@@ -717,6 +755,11 @@ function Invoke-ReadCmd {
     Assert-Cleanup 'read'
     Write-Output "read OK ($kind configuration)"
     Write-Output "backup: $path"
+    if ($res.Duplicates -gt 0) {
+        Write-Output ''
+        Write-Output "NOTE: $($res.Duplicates) duplicate device execution(s); all were read-only and returned identical values, so the result is valid."
+        Write-Output 'REBOOT REQUIRED before using the player again: in this boot every new app process is replaced by the payload (docs/ZYGOTE-SINGLE-EXECUTION.md).'
+    }
 }
 
 function Invoke-ApplyCmd {

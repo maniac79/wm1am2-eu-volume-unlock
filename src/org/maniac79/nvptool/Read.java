@@ -35,16 +35,11 @@ public final class Read {
         r.begin();
         if (claim.mode != null) {
             r.note("claim_acquired mode=" + claim.mode);
-        }
-        if (claim.mode == null) {
-            // No claim medium on this filesystem, and deleting the setting does
-            // not revoke Zygote's cached copy (measured on hardware), so the
-            // single-execution property cannot be guaranteed. Refuse instead of
-            // guessing.
-            r.summary(Result.REFUSED, "preflight", 0, 0, Profile.COUNT,
-                    "no_single_execution_guard");
-            System.exit(Result.EXIT_REFUSED);
-            return;
+        } else {
+            // No claim medium on this filesystem. A later execution is therefore
+            // expected; the host accepts the run only when every execution is
+            // read-only and all returned identical values.
+            r.note("claim_unavailable");
         }
 
         String env = Profile.checkEnvironment();

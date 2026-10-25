@@ -13,6 +13,14 @@ that an asset was published or that physical hardware was tested.
 
 ## Unreleased — hardening after 0.2.3
 
+- **Reads are accepted when they agree, writes stay closed.** One privileged request
+  executes more than once on this firmware and that cannot be prevented (measured
+  on hardware, sections 7-8 of `docs/ZYGOTE-SINGLE-EXECUTION.md`). `read` now
+  accepts multiple executions only if all are read-only (`written=0`,
+  `verified=8`) and returned byte-identical values; it reports the duplicate count
+  and states that a reboot is required before the player's apps work again. All
+  NVRAM writes remain disabled.
+
 Investigation of the duplicate device execution during a single `read` (see
 `docs/ZYGOTE-SINGLE-EXECUTION.md`).
 

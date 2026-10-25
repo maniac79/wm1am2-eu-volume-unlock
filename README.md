@@ -334,6 +334,23 @@ already written earlier fields. The tool reports that boundary; a subsequent
 write needs an assessed current state and recovery plan. Preserve the
 package's APK for future use, as well as your backups.
 
+### Current limitation: one privileged read per boot
+
+On this firmware a single privileged request executes more than once on the
+device, and that cannot be prevented by the tool (measurements in
+[docs/ZYGOTE-SINGLE-EXECUTION.md](docs/ZYGOTE-SINGLE-EXECUTION.md)). After any
+privileged operation, Android replaces every new app process with the tool's
+payload for the rest of that boot, so apps - Settings included - will not open
+until the player is restarted.
+
+The tool therefore works like this:
+
+| Action | Per boot | Cost |
+|---|---|---|
+| `status` | unlimited | none |
+| `read` | one | reboot afterwards; duplicate executions are accepted only when all agree and none wrote |
+| `apply`, `restore`, `restore-reference` | none | disabled (exit 13) until a write can be verified |
+
 ### From source
 
 Building needs the JDK, Python 3, Android SDK build-tools and a platform

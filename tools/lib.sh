@@ -412,6 +412,13 @@ nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
     local begins summaries bline sline line
     begins=$(grep -c "ev=begin" "$f" || true)
     summaries=$(grep -c "ev=summary" "$f" || true)
+    # Reads may execute more than once per request on this firmware; accepted only
+    # when every execution is read-only and all saw identical values.
+    if [ "$op" = "read" ] && [ "${begins:-0}" -gt 1 ]; then
+        nl_parse_read_multi
+        return $?
+    fi
+
     [ "$begins" = "1" ] || { NL_PARSE_ERR="bad_begin_count"; return 3; }
     [ "$summaries" = "1" ] || { NL_PARSE_ERR="bad_summary_count"; return 3; }
 
@@ -467,6 +474,76 @@ nl_parse() {   # nl_parse <op> <runid>   (reads $NL_RUN_DIR/result.txt)
         done
     fi
     return 0
+}
+
+
+# A single armed request executes more than once on this firmware and there is no
+# way to prevent it (docs/ZYGOTE-SINGLE-EXECUTION.md). For a READ that is
+# acceptable *only* when every execution is read-only and every execution saw
+# byte-identical values: the result is then the same as one execution would have
+# produced. Anything else is refused. Writes never take this path.
+nl_parse_read_multi() {   # uses $NL_RUN_DIR/result.txt and $NL_RUN_ID
+    local f="$NL_RUN_DIR/result.txt" out
+    out=$(awk -v want="$NL_RUN_ID" '
+        function tk(line, key,   n, i, tok, v) {
+            n = split(line, tok, " ")
+            for (i = 1; i <= n; i++) {
+                if (index(tok[i], key "=") == 1) {
+                    v = tok[i]
+                    sub(key "=", "", v)
+                    return v
+                }
+            }
+            return ""
+        }
+        {
+            if (index($0, "run=" want) == 0) next
+            pid = tk($0, "pid")
+            if (index($0, "ev=begin"))   { b[pid]++; nexec++; next }
+            if (index($0, "ev=summary")) {
+                s[pid]++
+                if (tk($0, "status") != "OK")  err = "not_ok"
+                if (tk($0, "written") != "0")  err = "not_read_only"
+                if (tk($0, "op") != "read")    err = "not_a_read"
+                next
+            }
+            if (index($0, "ev=field")) {
+                idx = tk($0, "idx")
+                val[pid, idx] = tk($0, "val")
+                fc[pid]++
+            }
+        }
+        END {
+            if (err != "")   { print err; exit }
+            if (nexec < 1)    { print "no_execution"; exit }
+            for (p in b) {
+                if (b[p] != 1) { print "bad_begin_count"; exit }
+                if (s[p] != 1) { print "bad_summary_count"; exit }
+                if (fc[p] != 8) { print "field_count"; exit }
+            }
+            for (p in s) { if (!(p in b)) { print "summary_without_begin"; exit } }
+            for (i = 0; i < 8; i++) {
+                ref = ""; first = 1
+                for (p in b) {
+                    if (first) { ref = val[p, i]; first = 0 }
+                    else if (val[p, i] != ref) { print "value_mismatch_" i; exit }
+                }
+            }
+            print "OK 0 8 8 " (nexec - 1)
+        }
+    ' "$f")
+
+    case "$out" in
+        "OK "*)
+            set -- $out
+            NL_STATUS=OK; NL_WRITTEN=$2; NL_VERIFIED=$3; NL_TOTAL=$4
+            NL_DUPLICATES=$5; NL_FIELDS=8; NL_REASON="$5 duplicates, identical"
+            return 0 ;;
+        "")
+            NL_PARSE_ERR="no_output"; return 3 ;;
+        *)
+            NL_PARSE_ERR="$out"; return 3 ;;
+    esac
 }
 
 nl_success() { [ "${NL_STATUS:-}" = "OK" ]; }
