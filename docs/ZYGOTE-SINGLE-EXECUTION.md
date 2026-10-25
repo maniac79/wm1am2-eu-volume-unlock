@@ -218,3 +218,46 @@ NVRAM writes stay held. That is fail-closed, not a fix.
 **What would still change the outcome**: a claim medium the payload can write
 (not on `/data/local/tmp` here), or a trigger that ActivityManager never retries.
 Both are open questions; neither can be settled by another read.
+
+## 8. Broadcast trigger measured (2026-10-25, same unit)
+
+Hypothesis: the duplicate is ActivityManager retrying an *activity* start, so a
+trigger with no activity record - a broadcast to a receiver in our own package -
+should fork once and leave the Settings UI alone.
+
+Implemented: a bare `Trigger` receiver in the helper manifest, and
+`am broadcast -a org.maniac79.nvptool.TRIGGER -n org.maniac79.nvptool/.Trigger`
+as the trigger. Settings is no longer touched by the tool at all.
+
+Result - the duplicate is **not** gone, and the collateral damage is **not**
+reduced:
+
+```
+12:22:16.116 pid=4553  begin ... summary      <- first execution
+12:22:26.812 pid=4640  begin ... summary      <- second execution, 10.7 s later
+```
+
+The gap is the broadcast delivery timeout: when the process dies without the
+receiver running, delivery is retried once more before the broadcast is dropped.
+So *any* start that must deliver something is retried, not just activity starts.
+
+Worse: after the run, `com.android.settings` could not be started at all
+(`pidof` empty immediately after `am start`), and the tool had not touched
+Settings in this run. That is the documented "disturbed later process starts"
+from the public analysis, observed directly: the exemption is cached in Zygote
+for the whole boot session, deleting the setting does not clear it, and from
+then on **every** new app process is replaced by the payload. Only a Zygote
+restart - a reboot - clears it.
+
+### Consequence, final for this technique on this firmware
+
+- One armed request costs exactly **two** executions, whatever the trigger.
+- After that request the device cannot start app processes until it is rebooted.
+- Therefore: at most **one privileged operation per boot**, followed by a reboot;
+  single execution cannot be enforced from the payload or the host.
+- A read is idempotent and safe in that model. A write is not *unsafe* (the payload
+  paths are idempotent per field) but it cannot be verified in the same boot,
+  because verification needs an app start.
+
+The broadcast trigger was reverted together with the rest of the experiment; the
+tree stays at the fail-closed state where a run without a claim refuses.
